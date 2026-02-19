@@ -12,3 +12,6 @@ bin/
 # Coverage and profiling
 coverage.out
 profile.out
+
+# Test logs
+go-test.log
