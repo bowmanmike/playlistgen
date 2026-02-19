@@ -17,7 +17,7 @@ jobs:
       contents: read
       packages: write
     env:
-      IMAGE_NAME: ${{ env.REGISTRY }}/${{ github.repository }}
+      IMAGE_NAME: ghcr.io/${{ github.repository }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
