@@ -73,6 +73,34 @@ func TestRunSync(t *testing.T) {
 		}
 	})
 
+	t.Run("uses environment fallback", func(t *testing.T) {
+		t.Setenv("NAVIDROME_URL", "https://navidrome.local")
+		t.Setenv("NAVIDROME_USERNAME", "envuser")
+		t.Setenv("NAVIDROME_PASSWORD", "envpass")
+
+		out := &bytes.Buffer{}
+		cmd := &cobra.Command{}
+		cmd.SetOut(out)
+
+		opts := &options{
+			newNavidromeClient: func(cfg navidrome.Config) (app.NavidromePort, error) {
+				if cfg.Username != "envuser" || cfg.Password != "envpass" {
+					t.Fatalf("expected env credentials, got %+v", cfg)
+				}
+				return navidromeClientFunc(func(ctx context.Context) ([]app.Track, error) {
+					return []app.Track{{ID: "1"}}, nil
+				}), nil
+			},
+			newApp: func(deps app.Dependencies) (*app.App, error) {
+				return app.New(deps)
+			},
+		}
+
+		if err := runSync(context.Background(), cmd, opts); err != nil {
+			t.Fatalf("runSync error: %v", err)
+		}
+	})
+
 	t.Run("propagates client errors", func(t *testing.T) {
 		cmd := &cobra.Command{}
 		opts := &options{

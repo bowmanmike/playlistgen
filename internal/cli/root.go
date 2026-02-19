@@ -27,9 +27,9 @@ func newRootCmd(opts *options) *cobra.Command {
 		Short: "AI-assisted playlist generator",
 	}
 
-	cmd.PersistentFlags().StringVar(&opts.navidromeURL, "navidrome-url", getEnv("NAVIDROME_URL", ""), "Navidrome base URL (or NAVIDROME_URL)")
-	cmd.PersistentFlags().StringVar(&opts.navidromeUsername, "navidrome-username", getEnv("NAVIDROME_USERNAME", ""), "Navidrome username (or NAVIDROME_USERNAME)")
-	cmd.PersistentFlags().StringVar(&opts.navidromePassword, "navidrome-password", getEnv("NAVIDROME_PASSWORD", ""), "Navidrome password (or NAVIDROME_PASSWORD)")
+	cmd.PersistentFlags().StringVar(&opts.navidromeURL, "navidrome-url", "", "Navidrome base URL (or NAVIDROME_URL)")
+	cmd.PersistentFlags().StringVar(&opts.navidromeUsername, "navidrome-username", "", "Navidrome username (or NAVIDROME_USERNAME/NAVIDROME_USER)")
+	cmd.PersistentFlags().StringVar(&opts.navidromePassword, "navidrome-password", "", "Navidrome password (or NAVIDROME_PASSWORD)")
 	cmd.PersistentFlags().StringVar(&opts.dbPath, "db-path", getEnv("PLAYLISTGEN_DB_PATH", defaultDBPath), "SQLite database path (or PLAYLISTGEN_DB_PATH)")
 
 	cmd.AddCommand(newSyncCmd(opts))
@@ -66,4 +66,25 @@ func getEnv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func (o *options) populateFromEnv() {
+	if o.navidromeURL == "" {
+		o.navidromeURL = os.Getenv("NAVIDROME_URL")
+	}
+	if o.navidromeUsername == "" {
+		o.navidromeUsername = firstEnv("NAVIDROME_USERNAME", "NAVIDROME_USER")
+	}
+	if o.navidromePassword == "" {
+		o.navidromePassword = os.Getenv("NAVIDROME_PASSWORD")
+	}
+}
+
+func firstEnv(keys ...string) string {
+	for _, key := range keys {
+		if v := os.Getenv(key); v != "" {
+			return v
+		}
+	}
+	return ""
 }

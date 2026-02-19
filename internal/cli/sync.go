@@ -27,6 +27,8 @@ func newSyncCmd(opts *options) *cobra.Command {
 }
 
 func runSync(ctx context.Context, cmd *cobra.Command, opts *options) error {
+	opts.populateFromEnv()
+
 	if opts.navidromeURL == "" {
 		return errors.New("navidrome URL must be set via --navidrome-url or NAVIDROME_URL")
 	}
