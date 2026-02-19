@@ -18,6 +18,8 @@ jobs:
       packages: write
     env:
       IMAGE_NAME: ghcr.io/${{ github.repository }}
+      IMAGE_TAG_COMMIT: ${{ github.sha }}
+      IMAGE_TAG_REF: ${{ github.ref_name }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -58,4 +60,7 @@ jobs:
         with:
           context: .
           push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-          tags: ${{ env.IMAGE_NAME }}:latest
+          tags: |
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG_REF }}
+            ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG_COMMIT }}
