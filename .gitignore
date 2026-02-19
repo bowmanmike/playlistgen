@@ -1,5 +1,5 @@
 # Go build artifacts
-playlistgen
+/playlistgen
 bin/
 *.exe
 *.test
