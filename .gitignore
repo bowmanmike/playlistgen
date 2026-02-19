@@ -11,6 +11,9 @@ bin/
 .gopath/
 .cache/
 
+# Local data
+data/
+
 # Coverage and profiling
 coverage.out
 profile.out

@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -12,11 +13,15 @@ import (
 func TestListTracks(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		httpClient := mockHTTPClient(func(req *http.Request) (*http.Response, error) {
-			if got := req.Header.Get(authHeader); got != "Bearer token" {
-				t.Fatalf("missing auth header, got %q", got)
-			}
 			if req.URL.Path != "/api/library/tracks" {
 				t.Fatalf("unexpected path %s", req.URL.Path)
+			}
+			values, _ := url.ParseQuery(req.URL.RawQuery)
+			if values.Get("u") != "user" || values.Get("f") != "json" || values.Get("c") != clientName {
+				t.Fatalf("missing auth params: %v", values)
+			}
+			if values.Get("t") == "" || values.Get("s") == "" {
+				t.Fatalf("token/salt should be present")
 			}
 			return &http.Response{
 				StatusCode: http.StatusOK,
@@ -27,7 +32,8 @@ func TestListTracks(t *testing.T) {
 
 		client, err := NewClient(Config{
 			BaseURL:    "https://navidrome.local",
-			APIKey:     "token",
+			Username:   "user",
+			Password:   "pass",
 			HTTPClient: httpClient,
 		})
 		if err != nil {

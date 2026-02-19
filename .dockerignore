@@ -9,3 +9,4 @@ playlistgen
 .gomodcache
 .gopath
 go-test.log
+data/
