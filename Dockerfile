@@ -9,7 +9,7 @@ COPY go.mod ./
 RUN go mod download
 
 COPY . .
-RUN go build -o /out/playlistgen ./...
+RUN go build -o /out/playlistgen ./cmd/playlistgen
 
 FROM alpine:3.19
 RUN adduser -D playlistgen

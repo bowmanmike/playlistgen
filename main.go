@@ -1,11 +1,13 @@
 package main
 
-import "fmt"
+import (
+	"log"
+
+	"github.com/bowmanmike/playlistgen/internal/cli"
+)
 
 func main() {
-	fmt.Println(appMessage())
-}
-
-func appMessage() string {
-	return "main"
+	if err := cli.Execute(); err != nil {
+		log.Fatal(err)
+	}
 }
