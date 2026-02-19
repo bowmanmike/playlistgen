@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/bowmanmike/playlistgen/internal/app"
 	"github.com/bowmanmike/playlistgen/internal/navidrome"
 )
 
@@ -35,11 +36,18 @@ func runSync(ctx context.Context, cmd *cobra.Command, opts *options) error {
 		return fmt.Errorf("init navidrome client: %w", err)
 	}
 
-	tracks, err := client.ListTracks(ctx)
+	appInstance, err := opts.newApp(app.Dependencies{
+		Navidrome: client,
+	})
 	if err != nil {
-		return fmt.Errorf("list tracks: %w", err)
+		return fmt.Errorf("init app: %w", err)
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Fetched %d tracks\n", len(tracks))
+	count, err := appInstance.SyncTracks(ctx)
+	if err != nil {
+		return fmt.Errorf("sync tracks: %w", err)
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "Fetched %d tracks\n", count)
 	return nil
 }

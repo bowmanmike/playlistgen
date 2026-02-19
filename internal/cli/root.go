@@ -1,11 +1,11 @@
 package cli
 
 import (
-	"context"
 	"os"
 
 	"github.com/spf13/cobra"
 
+	"github.com/bowmanmike/playlistgen/internal/app"
 	"github.com/bowmanmike/playlistgen/internal/navidrome"
 )
 
@@ -32,20 +32,20 @@ func newRootCmd(opts *options) *cobra.Command {
 	return cmd
 }
 
-type navidromeAPI interface {
-	ListTracks(ctx context.Context) ([]navidrome.Track, error)
-}
-
 type options struct {
 	navidromeURL       string
 	navidromeAPIKey    string
-	newNavidromeClient func(navidrome.Config) (navidromeAPI, error)
+	newNavidromeClient func(navidrome.Config) (app.NavidromePort, error)
+	newApp             func(app.Dependencies) (*app.App, error)
 }
 
 func newOptions() *options {
 	return &options{
-		newNavidromeClient: func(cfg navidrome.Config) (navidromeAPI, error) {
+		newNavidromeClient: func(cfg navidrome.Config) (app.NavidromePort, error) {
 			return navidrome.NewClient(cfg)
+		},
+		newApp: func(deps app.Dependencies) (*app.App, error) {
+			return app.New(deps)
 		},
 	}
 }

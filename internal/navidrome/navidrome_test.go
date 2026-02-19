@@ -20,7 +20,7 @@ func TestListTracks(t *testing.T) {
 			}
 			return &http.Response{
 				StatusCode: http.StatusOK,
-				Body:       io.NopCloser(strings.NewReader(`{"tracks":[{"id":"1","title":"Song","artist":"Artist","album":"Album","duration":180000000000,"path":"/music/song.mp3"}]}`)),
+				Body:       io.NopCloser(strings.NewReader(`{"tracks":[{"id":"1","title":"Song","artist":"Artist","album":"Album","duration":180,"path":"/music/song.mp3"}]}`)),
 				Header:     make(http.Header),
 			}, nil
 		})
@@ -41,6 +41,9 @@ func TestListTracks(t *testing.T) {
 
 		if len(tracks) != 1 || tracks[0].ID != "1" {
 			t.Fatalf("unexpected tracks %+v", tracks)
+		}
+		if tracks[0].Duration != 180*time.Second {
+			t.Fatalf("unexpected duration %v", tracks[0].Duration)
 		}
 	})
 

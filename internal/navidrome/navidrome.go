@@ -10,6 +10,8 @@ import (
 	"path"
 	"strings"
 	"time"
+
+	"github.com/bowmanmike/playlistgen/internal/app"
 )
 
 const (
@@ -30,16 +32,6 @@ type Client struct {
 	baseURL    *url.URL
 	apiKey     string
 	httpClient *http.Client
-}
-
-// Track represents the subset of track metadata we care about for syncing.
-type Track struct {
-	ID       string        `json:"id"`
-	Title    string        `json:"title"`
-	Artist   string        `json:"artist"`
-	Album    string        `json:"album"`
-	Duration time.Duration `json:"duration"` // seconds parsed downstream
-	Path     string        `json:"path"`
 }
 
 // NewClient builds a Navidrome API client.
@@ -65,7 +57,7 @@ func NewClient(cfg Config) (*Client, error) {
 }
 
 // ListTracks fetches the track list from Navidrome.
-func (c *Client) ListTracks(ctx context.Context) ([]Track, error) {
+func (c *Client) ListTracks(ctx context.Context) ([]app.Track, error) {
 	u := *c.baseURL
 	u.Path = path.Join(c.baseURL.Path, tracksEndpoint)
 
@@ -89,12 +81,33 @@ func (c *Client) ListTracks(ctx context.Context) ([]Track, error) {
 	}
 
 	var payload struct {
-		Tracks []Track `json:"tracks"`
+		Tracks []trackPayload `json:"tracks"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return nil, fmt.Errorf("decode tracks: %w", err)
 	}
 
-	return payload.Tracks, nil
+	tracks := make([]app.Track, 0, len(payload.Tracks))
+	for _, t := range payload.Tracks {
+		tracks = append(tracks, app.Track{
+			ID:       t.ID,
+			Title:    t.Title,
+			Artist:   t.Artist,
+			Album:    t.Album,
+			Duration: time.Duration(t.DurationSeconds * float64(time.Second)),
+			Path:     t.Path,
+		})
+	}
+
+	return tracks, nil
+}
+
+type trackPayload struct {
+	ID              string  `json:"id"`
+	Title           string  `json:"title"`
+	Artist          string  `json:"artist"`
+	Album           string  `json:"album"`
+	DurationSeconds float64 `json:"duration"`
+	Path            string  `json:"path"`
 }

@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/bowmanmike/playlistgen/internal/app"
 	"github.com/bowmanmike/playlistgen/internal/navidrome"
 )
 
@@ -28,10 +29,13 @@ func TestRunSync(t *testing.T) {
 		opts := &options{
 			navidromeURL:    "https://navidrome.local",
 			navidromeAPIKey: "key",
-			newNavidromeClient: func(cfg navidrome.Config) (navidromeAPI, error) {
-				return navidromeClientFunc(func(ctx context.Context) ([]navidrome.Track, error) {
-					return []navidrome.Track{{ID: "1"}, {ID: "2"}}, nil
+			newNavidromeClient: func(cfg navidrome.Config) (app.NavidromePort, error) {
+				return navidromeClientFunc(func(ctx context.Context) ([]app.Track, error) {
+					return []app.Track{{ID: "1"}, {ID: "2"}}, nil
 				}), nil
+			},
+			newApp: func(deps app.Dependencies) (*app.App, error) {
+				return app.New(deps)
 			},
 		}
 
@@ -48,8 +52,27 @@ func TestRunSync(t *testing.T) {
 		cmd := &cobra.Command{}
 		opts := &options{
 			navidromeURL: "https://navidrome.local",
-			newNavidromeClient: func(cfg navidrome.Config) (navidromeAPI, error) {
+			newNavidromeClient: func(cfg navidrome.Config) (app.NavidromePort, error) {
 				return nil, errors.New("boom")
+			},
+		}
+
+		if err := runSync(context.Background(), cmd, opts); err == nil {
+			t.Fatalf("expected error")
+		}
+	})
+
+	t.Run("propagates app errors", func(t *testing.T) {
+		cmd := &cobra.Command{}
+		opts := &options{
+			navidromeURL: "https://navidrome.local",
+			newNavidromeClient: func(cfg navidrome.Config) (app.NavidromePort, error) {
+				return navidromeClientFunc(func(ctx context.Context) ([]app.Track, error) {
+					return nil, nil
+				}), nil
+			},
+			newApp: func(deps app.Dependencies) (*app.App, error) {
+				return nil, errors.New("app error")
 			},
 		}
 
@@ -59,8 +82,8 @@ func TestRunSync(t *testing.T) {
 	})
 }
 
-type navidromeClientFunc func(context.Context) ([]navidrome.Track, error)
+type navidromeClientFunc func(context.Context) ([]app.Track, error)
 
-func (f navidromeClientFunc) ListTracks(ctx context.Context) ([]navidrome.Track, error) {
+func (f navidromeClientFunc) ListTracks(ctx context.Context) ([]app.Track, error) {
 	return f(ctx)
 }
