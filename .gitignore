@@ -1,1 +1,14 @@
+# Go build artifacts
 playlistgen
+bin/
+*.exe
+*.test
+*.out
+
+# Tooling caches
+.gocache/
+.cache/
+
+# Coverage and profiling
+coverage.out
+profile.out
