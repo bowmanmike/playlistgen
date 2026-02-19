@@ -19,7 +19,7 @@ import (
 
 const (
 	defaultTimeout = 30 * time.Second
-	tracksEndpoint = "/api/library/tracks"
+	tracksEndpoint = "/rest/api/library/tracks"
 	apiVersion     = "1.16.1"
 	clientName     = "playlistgen"
 )

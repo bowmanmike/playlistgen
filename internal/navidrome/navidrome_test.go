@@ -13,7 +13,7 @@ import (
 func TestListTracks(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		httpClient := mockHTTPClient(func(req *http.Request) (*http.Response, error) {
-			if req.URL.Path != "/api/library/tracks" {
+			if req.URL.Path != "/rest/api/library/tracks" {
 				t.Fatalf("unexpected path %s", req.URL.Path)
 			}
 			values, _ := url.ParseQuery(req.URL.RawQuery)
