@@ -2,8 +2,8 @@ package navidrome
 
 import (
 	"context"
+	"crypto/md5"
 	"crypto/rand"
-	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -186,7 +186,7 @@ func authParams(user, password string) url.Values {
 	}
 
 	salt := randomSalt(16)
-	hash := sha1.Sum([]byte(password + salt))
+	hash := md5.Sum([]byte(password + salt))
 
 	v.Set("u", user)
 	v.Set("t", hex.EncodeToString(hash[:]))
