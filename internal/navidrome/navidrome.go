@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,10 +19,12 @@ import (
 )
 
 const (
-	defaultTimeout = 30 * time.Second
-	tracksEndpoint = "/rest/api/library/tracks"
-	apiVersion     = "1.16.1"
-	clientName     = "playlistgen"
+	defaultTimeout    = 30 * time.Second
+	albumListEndpoint = "rest/getAlbumList2.view"
+	albumEndpoint     = "rest/getAlbum.view"
+	apiVersion        = "1.16.1"
+	clientName        = "playlistgen"
+	albumPageSize     = 200
 )
 
 // Config drives Client construction.
@@ -63,61 +66,117 @@ func NewClient(cfg Config) (*Client, error) {
 	}, nil
 }
 
-// ListTracks fetches the track list from Navidrome.
+// ListTracks fetches the track list from Navidrome via Subsonic API.
 func (c *Client) ListTracks(ctx context.Context) ([]app.Track, error) {
-	u := *c.baseURL
-	u.Path = path.Join(c.baseURL.Path, tracksEndpoint)
+	var (
+		tracks []app.Track
+		offset int
+	)
 
-	if c.username != "" {
-		params := authParams(c.username, c.password)
-		u.RawQuery = params.Encode()
-	}
+	for {
+		albums, err := c.fetchAlbumPage(ctx, offset)
+		if err != nil {
+			return nil, err
+		}
+		if len(albums) == 0 {
+			break
+		}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
+		for _, album := range albums {
+			songs, err := c.fetchAlbumSongs(ctx, album.ID)
+			if err != nil {
+				return nil, err
+			}
+			tracks = append(tracks, songs...)
+		}
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request tracks: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status %d", resp.StatusCode)
-	}
-
-	var payload struct {
-		Tracks []trackPayload `json:"tracks"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return nil, fmt.Errorf("decode tracks: %w", err)
-	}
-
-	tracks := make([]app.Track, 0, len(payload.Tracks))
-	for _, t := range payload.Tracks {
-		tracks = append(tracks, app.Track{
-			ID:       t.ID,
-			Title:    t.Title,
-			Artist:   t.Artist,
-			Album:    t.Album,
-			Duration: time.Duration(t.DurationSeconds * float64(time.Second)),
-			Path:     t.Path,
-		})
+		if len(albums) < albumPageSize {
+			break
+		}
+		offset += len(albums)
 	}
 
 	return tracks, nil
 }
 
-type trackPayload struct {
-	ID              string  `json:"id"`
-	Title           string  `json:"title"`
-	Artist          string  `json:"artist"`
-	Album           string  `json:"album"`
-	DurationSeconds float64 `json:"duration"`
-	Path            string  `json:"path"`
+func (c *Client) fetchAlbumPage(ctx context.Context, offset int) ([]albumItem, error) {
+	params := url.Values{}
+	params.Set("type", "alphabeticalByName")
+	params.Set("size", strconv.Itoa(albumPageSize))
+	params.Set("offset", strconv.Itoa(offset))
+
+	var resp albumListResponse
+	if err := c.doRequest(ctx, albumListEndpoint, params, &resp); err != nil {
+		return nil, err
+	}
+
+	if err := resp.Response.validate(); err != nil {
+		return nil, err
+	}
+
+	return resp.Response.AlbumList.Albums, nil
+}
+
+func (c *Client) fetchAlbumSongs(ctx context.Context, albumID string) ([]app.Track, error) {
+	params := url.Values{}
+	params.Set("id", albumID)
+
+	var resp albumResponse
+	if err := c.doRequest(ctx, albumEndpoint, params, &resp); err != nil {
+		return nil, err
+	}
+
+	if err := resp.Response.validate(); err != nil {
+		return nil, err
+	}
+
+	songs := make([]app.Track, 0, len(resp.Response.Album.Songs))
+	for _, song := range resp.Response.Album.Songs {
+		songs = append(songs, app.Track{
+			ID:       song.ID,
+			Title:    song.Title,
+			Artist:   song.Artist,
+			Album:    song.Album,
+			Duration: time.Duration(song.Duration) * time.Second,
+			Path:     song.Path,
+		})
+	}
+
+	return songs, nil
+}
+
+func (c *Client) doRequest(ctx context.Context, endpoint string, params url.Values, target interface{}) error {
+	u := *c.baseURL
+	u.Path = ensureLeadingSlash(path.Join(c.baseURL.Path, endpoint))
+
+	query := authParams(c.username, c.password)
+	for key, values := range params {
+		for _, value := range values {
+			query.Add(key, value)
+		}
+	}
+	u.RawQuery = query.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("request %s: %w", endpoint, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status %d", resp.StatusCode)
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
+		return fmt.Errorf("decode response: %w", err)
+	}
+
+	return nil
 }
 
 func authParams(user, password string) url.Values {
@@ -150,4 +209,69 @@ func randomSalt(n int) string {
 	}
 
 	return hex.EncodeToString(buf)
+}
+
+func ensureLeadingSlash(p string) string {
+	if p == "" {
+		return "/"
+	}
+	if !strings.HasPrefix(p, "/") {
+		return "/" + p
+	}
+	return p
+}
+
+type albumListResponse struct {
+	Response albumListPayload `json:"subsonic-response"`
+}
+
+type albumListPayload struct {
+	subsonicEnvelope
+	AlbumList struct {
+		Albums []albumItem `json:"album"`
+	} `json:"albumList2"`
+}
+
+type albumResponse struct {
+	Response albumPayload `json:"subsonic-response"`
+}
+
+type albumPayload struct {
+	subsonicEnvelope
+	Album struct {
+		Songs []songItem `json:"song"`
+	} `json:"album"`
+}
+
+type subsonicEnvelope struct {
+	Status string         `json:"status"`
+	Error  *subsonicError `json:"error"`
+}
+
+func (e subsonicEnvelope) validate() error {
+	if e.Error != nil {
+		return fmt.Errorf("subsonic error %d: %s", e.Error.Code, e.Error.Message)
+	}
+	if strings.ToLower(e.Status) != "ok" {
+		return fmt.Errorf("subsonic status %s", e.Status)
+	}
+	return nil
+}
+
+type subsonicError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+type albumItem struct {
+	ID string `json:"id"`
+}
+
+type songItem struct {
+	ID       string `json:"id"`
+	Title    string `json:"title"`
+	Artist   string `json:"artist"`
+	Album    string `json:"album"`
+	Duration int    `json:"duration"`
+	Path     string `json:"path"`
 }

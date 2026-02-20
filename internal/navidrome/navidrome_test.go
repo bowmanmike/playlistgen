@@ -11,23 +11,37 @@ import (
 )
 
 func TestListTracks(t *testing.T) {
-	t.Run("success", func(t *testing.T) {
+	t.Run("success fetches albums and songs", func(t *testing.T) {
+		call := 0
 		httpClient := mockHTTPClient(func(req *http.Request) (*http.Response, error) {
-			if req.URL.Path != "/rest/api/library/tracks" {
-				t.Fatalf("unexpected path %s", req.URL.Path)
-			}
+			call++
 			values, _ := url.ParseQuery(req.URL.RawQuery)
-			if values.Get("u") != "user" || values.Get("f") != "json" || values.Get("c") != clientName {
+			if values.Get("u") != "user" || values.Get("f") != "json" {
 				t.Fatalf("missing auth params: %v", values)
 			}
-			if values.Get("t") == "" || values.Get("s") == "" {
-				t.Fatalf("token/salt should be present")
+
+			switch req.URL.Path {
+			case "/rest/getAlbumList2.view":
+				body := `{"subsonic-response":{"status":"ok","albumList2":{"album":[{"id":"alb1"}]}}}`
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(body)),
+					Header:     make(http.Header),
+				}, nil
+			case "/rest/getAlbum.view":
+				if req.URL.Query().Get("id") != "alb1" {
+					t.Fatalf("unexpected album id %s", req.URL.Query().Get("id"))
+				}
+				body := `{"subsonic-response":{"status":"ok","album":{"song":[{"id":"1","title":"Song","artist":"Artist","album":"Album","duration":180,"path":"/music/song.mp3"}]}}}`
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(body)),
+					Header:     make(http.Header),
+				}, nil
+			default:
+				t.Fatalf("unexpected path %s", req.URL.Path)
 			}
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Body:       io.NopCloser(strings.NewReader(`{"tracks":[{"id":"1","title":"Song","artist":"Artist","album":"Album","duration":180,"path":"/music/song.mp3"}]}`)),
-				Header:     make(http.Header),
-			}, nil
+			return nil, nil
 		})
 
 		client, err := NewClient(Config{
@@ -51,9 +65,12 @@ func TestListTracks(t *testing.T) {
 		if tracks[0].Duration != 180*time.Second {
 			t.Fatalf("unexpected duration %v", tracks[0].Duration)
 		}
+		if call != 2 {
+			t.Fatalf("expected two requests, got %d", call)
+		}
 	})
 
-	t.Run("non-200", func(t *testing.T) {
+	t.Run("non-200 from album list", func(t *testing.T) {
 		httpClient := mockHTTPClient(func(req *http.Request) (*http.Response, error) {
 			return &http.Response{
 				StatusCode: http.StatusBadGateway,
@@ -64,6 +81,8 @@ func TestListTracks(t *testing.T) {
 
 		client, err := NewClient(Config{
 			BaseURL:    "https://navidrome.local",
+			Username:   "user",
+			Password:   "pass",
 			HTTPClient: httpClient,
 		})
 		if err != nil {
