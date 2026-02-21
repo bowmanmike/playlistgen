@@ -41,6 +41,7 @@ func newRootCmd(opts *options) *cobra.Command {
 	cmd.PersistentFlags().StringVar(&opts.logFormat, "log-format", "json", "Log format (json, text)")
 
 	cmd.AddCommand(newSyncCmd(opts))
+	cmd.AddCommand(newAudioProcessCmd(opts))
 
 	return cmd
 }

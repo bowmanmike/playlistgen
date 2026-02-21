@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -272,5 +273,69 @@ func TestSaveTracks(t *testing.T) {
 	}
 	if pendingEmbedding == 0 {
 		t.Fatalf("expected pending embedding jobs for nav2")
+	}
+}
+
+func TestAudioJobLifecycle(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "jobs.db")
+	store, err := New(Config{Path: dbPath})
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	track := app.Track{
+		ID:        "jobtrack",
+		Title:     "Job Track",
+		Artist:    "Artist",
+		Album:     "Album",
+		CreatedAt: time.Unix(2000, 0),
+		Duration:  90 * time.Second,
+		Path:      "/music/jobtrack.flac",
+		Suffix:    "flac",
+	}
+	if _, err := store.SaveTracks(context.Background(), []app.Track{track}); err != nil {
+		t.Fatalf("save tracks: %v", err)
+	}
+
+	jobs, err := store.ListPendingAudioJobs(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("list pending jobs: %v", err)
+	}
+	if len(jobs) == 0 {
+		t.Fatalf("expected at least one pending job")
+	}
+	job := jobs[0]
+	if job.Track.ID != track.ID || job.Track.Path != track.Path {
+		t.Fatalf("job track mismatch: %+v", job.Track)
+	}
+
+	if err := store.CompleteAudioJob(context.Background(), job.ID); err != nil {
+		t.Fatalf("complete job: %v", err)
+	}
+
+	raw, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	defer raw.Close()
+
+	var status string
+	if err := raw.QueryRow("SELECT status FROM track_audio_analysis WHERE id=?", job.ID).Scan(&status); err != nil {
+		t.Fatalf("query job status: %v", err)
+	}
+	if status != "completed" {
+		t.Fatalf("expected job completed, got %s", status)
+	}
+
+	jobErr := errors.New("simulated failure")
+	if err := store.FailAudioJob(context.Background(), job.ID, jobErr); err != nil {
+		t.Fatalf("fail job: %v", err)
+	}
+	if err := raw.QueryRow("SELECT status, error FROM track_audio_analysis WHERE id=?", job.ID).Scan(&status, new(sql.NullString)); err != nil {
+		t.Fatalf("query failed job: %v", err)
+	}
+	if status != "failed" {
+		t.Fatalf("expected job failed, got %s", status)
 	}
 }

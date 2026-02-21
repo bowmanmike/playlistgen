@@ -78,3 +78,18 @@ INSERT INTO track_embedding_jobs (
   attempts,
   last_attempt_at
 ) VALUES (?, ?, ?, ?, ?, ?);
+
+-- name: ListPendingAudioJobs :many
+SELECT
+  track_audio_analysis.id AS job_id,
+  sqlc.embed(tracks)
+FROM track_audio_analysis
+JOIN tracks ON tracks.id = track_audio_analysis.track_id
+WHERE track_audio_analysis.status = 'pending'
+ORDER BY track_audio_analysis.created_at, track_audio_analysis.id
+LIMIT ?;
+
+-- name: UpdateAudioJobStatus :exec
+UPDATE track_audio_analysis
+SET status = ?, processed_at = ?, error = ?, attempts = attempts + 1, last_attempt_at = ?
+WHERE id = ?;

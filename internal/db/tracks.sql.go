@@ -95,6 +95,66 @@ func (q *Queries) InsertTrackEmbeddingJob(ctx context.Context, arg InsertTrackEm
 	return err
 }
 
+const listPendingAudioJobs = `-- name: ListPendingAudioJobs :many
+SELECT
+  track_audio_analysis.id AS job_id,
+  tracks.id, tracks.navidrome_id, tracks.title, tracks.artist, tracks.artist_id, tracks.album, tracks.album_id, tracks.album_artist, tracks.genre, tracks.year, tracks.track_number, tracks.disc_number, tracks.duration_seconds, tracks.bitrate, tracks.file_size, tracks.path, tracks.content_type, tracks.suffix, tracks.created_at
+FROM track_audio_analysis
+JOIN tracks ON tracks.id = track_audio_analysis.track_id
+WHERE track_audio_analysis.status = 'pending'
+ORDER BY track_audio_analysis.created_at, track_audio_analysis.id
+LIMIT ?
+`
+
+type ListPendingAudioJobsRow struct {
+	JobID int64 `json:"job_id"`
+	Track Track `json:"track"`
+}
+
+func (q *Queries) ListPendingAudioJobs(ctx context.Context, limit int64) ([]ListPendingAudioJobsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listPendingAudioJobs, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPendingAudioJobsRow
+	for rows.Next() {
+		var i ListPendingAudioJobsRow
+		if err := rows.Scan(
+			&i.JobID,
+			&i.Track.ID,
+			&i.Track.NavidromeID,
+			&i.Track.Title,
+			&i.Track.Artist,
+			&i.Track.ArtistID,
+			&i.Track.Album,
+			&i.Track.AlbumID,
+			&i.Track.AlbumArtist,
+			&i.Track.Genre,
+			&i.Track.Year,
+			&i.Track.TrackNumber,
+			&i.Track.DiscNumber,
+			&i.Track.DurationSeconds,
+			&i.Track.Bitrate,
+			&i.Track.FileSize,
+			&i.Track.Path,
+			&i.Track.ContentType,
+			&i.Track.Suffix,
+			&i.Track.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTrackSyncStatus = `-- name: ListTrackSyncStatus :many
 SELECT track_id, navidrome_id, last_synced_at FROM navidrome_track_sync_status
 `
@@ -137,6 +197,31 @@ func (q *Queries) SelectTrackID(ctx context.Context, navidromeID string) (int64,
 	var id int64
 	err := row.Scan(&id)
 	return id, err
+}
+
+const updateAudioJobStatus = `-- name: UpdateAudioJobStatus :exec
+UPDATE track_audio_analysis
+SET status = ?, processed_at = ?, error = ?, attempts = attempts + 1, last_attempt_at = ?
+WHERE id = ?
+`
+
+type UpdateAudioJobStatusParams struct {
+	Status        string         `json:"status"`
+	ProcessedAt   sql.NullString `json:"processed_at"`
+	Error         sql.NullString `json:"error"`
+	LastAttemptAt sql.NullString `json:"last_attempt_at"`
+	ID            int64          `json:"id"`
+}
+
+func (q *Queries) UpdateAudioJobStatus(ctx context.Context, arg UpdateAudioJobStatusParams) error {
+	_, err := q.db.ExecContext(ctx, updateAudioJobStatus,
+		arg.Status,
+		arg.ProcessedAt,
+		arg.Error,
+		arg.LastAttemptAt,
+		arg.ID,
+	)
+	return err
 }
 
 const upsertTrack = `-- name: UpsertTrack :exec

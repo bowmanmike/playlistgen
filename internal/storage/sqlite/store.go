@@ -54,6 +54,12 @@ func New(cfg Config) (*Store, error) {
 	return &Store{db: db, forceProcessingJobs: cfg.ForceProcessingJobs}, nil
 }
 
+// AudioJob represents a pending audio analysis task and its associated track.
+type AudioJob struct {
+	ID    int64
+	Track app.Track
+}
+
 // SaveTracks inserts or replaces provided tracks and records sync metadata.
 func (s *Store) SaveTracks(ctx context.Context, tracks []app.Track) (app.SaveStats, error) {
 	stats := app.SaveStats{Fetched: len(tracks)}
@@ -260,6 +266,29 @@ func convertTrack(tr app.Track) db.UpsertTrackParams {
 	}
 }
 
+func convertDBTrack(row db.Track) app.Track {
+	return app.Track{
+		ID:          row.NavidromeID,
+		Title:       row.Title,
+		Artist:      row.Artist,
+		ArtistID:    stringValue(row.ArtistID),
+		Album:       row.Album,
+		AlbumID:     stringValue(row.AlbumID),
+		AlbumArtist: stringValue(row.AlbumArtist),
+		Genre:       stringPtrFromSQL(row.Genre),
+		Year:        intPtrFromSQL(row.Year),
+		TrackNumber: intPtrFromSQL(row.TrackNumber),
+		DiscNumber:  intPtrFromSQL(row.DiscNumber),
+		Duration:    time.Duration(row.DurationSeconds) * time.Second,
+		BitRate:     intPtrFromSQL(row.Bitrate),
+		FileSize:    int64PtrFromSQL(row.FileSize),
+		Path:        row.Path,
+		ContentType: stringPtrFromSQL(row.ContentType),
+		Suffix:      row.Suffix,
+		CreatedAt:   parseTimestamp(row.CreatedAt),
+	}
+}
+
 func nullStringPtr(v *string) sql.NullString {
 	if v == nil || strings.TrimSpace(*v) == "" {
 		return sql.NullString{}
@@ -288,6 +317,37 @@ func nullInt64Ptr(v *int64) sql.NullInt64 {
 	return sql.NullInt64{Int64: *v, Valid: true}
 }
 
+func stringValue(ns sql.NullString) string {
+	if !ns.Valid {
+		return ""
+	}
+	return ns.String
+}
+
+func stringPtrFromSQL(ns sql.NullString) *string {
+	if !ns.Valid {
+		return nil
+	}
+	val := ns.String
+	return &val
+}
+
+func intPtrFromSQL(ni sql.NullInt64) *int {
+	if !ni.Valid {
+		return nil
+	}
+	v := int(ni.Int64)
+	return &v
+}
+
+func int64PtrFromSQL(ni sql.NullInt64) *int64 {
+	if !ni.Valid {
+		return nil
+	}
+	v := ni.Int64
+	return &v
+}
+
 func enqueueProcessingJobs(ctx context.Context, queries *db.Queries, trackID int64) error {
 	status := "pending"
 	resetValue := sql.NullString{}
@@ -311,6 +371,62 @@ func enqueueProcessingJobs(ctx context.Context, queries *db.Queries, trackID int
 		LastAttemptAt: resetValue,
 	}); err != nil {
 		return fmt.Errorf("enqueue embedding job: %w", err)
+	}
+	return nil
+}
+
+// ListPendingAudioJobs returns pending audio jobs up to the provided limit.
+func (s *Store) ListPendingAudioJobs(ctx context.Context, limit int) ([]AudioJob, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := db.New(s.db).ListPendingAudioJobs(ctx, int64(limit))
+	if err != nil {
+		return nil, fmt.Errorf("list audio jobs: %w", err)
+	}
+	jobs := make([]AudioJob, 0, len(rows))
+	for _, row := range rows {
+		jobs = append(jobs, AudioJob{
+			ID:    row.JobID,
+			Track: convertDBTrack(row.Track),
+		})
+	}
+	return jobs, nil
+}
+
+// CompleteAudioJob marks an audio job as processed successfully.
+func (s *Store) CompleteAudioJob(ctx context.Context, jobID int64) error {
+	return s.setAudioJobStatus(ctx, jobID, "completed", nil)
+}
+
+// FailAudioJob marks an audio job as failed with the supplied error.
+func (s *Store) FailAudioJob(ctx context.Context, jobID int64, jobErr error) error {
+	if jobErr == nil {
+		return s.setAudioJobStatus(ctx, jobID, "failed", nil)
+	}
+	msg := jobErr.Error()
+	return s.setAudioJobStatus(ctx, jobID, "failed", &msg)
+}
+
+func (s *Store) setAudioJobStatus(ctx context.Context, jobID int64, status string, failureMessage *string) error {
+	processed := sql.NullString{}
+	if status == "completed" {
+		processed = sql.NullString{String: nowUTC(), Valid: true}
+	}
+	errField := sql.NullString{}
+	if failureMessage != nil && strings.TrimSpace(*failureMessage) != "" {
+		errField = sql.NullString{String: *failureMessage, Valid: true}
+	}
+
+	params := db.UpdateAudioJobStatusParams{
+		Status:        status,
+		ProcessedAt:   processed,
+		Error:         errField,
+		LastAttemptAt: sql.NullString{String: nowUTC(), Valid: true},
+		ID:            jobID,
+	}
+	if err := db.New(s.db).UpdateAudioJobStatus(ctx, params); err != nil {
+		return fmt.Errorf("update audio job status: %w", err)
 	}
 	return nil
 }
