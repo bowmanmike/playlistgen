@@ -32,7 +32,7 @@ func TestListTracks(t *testing.T) {
 				if req.URL.Query().Get("id") != "alb1" {
 					t.Fatalf("unexpected album id %s", req.URL.Query().Get("id"))
 				}
-				body := `{"subsonic-response":{"status":"ok","album":{"song":[{"id":"1","title":"Song","artist":"Artist","album":"Album","duration":180,"path":"/music/song.mp3"}]}}}`
+				body := `{"subsonic-response":{"status":"ok","album":{"song":[{"id":"1","title":"Song","artist":"Artist","artistId":"artist1","album":"Album","albumId":"album1","albumArtist":"AlbumArtist","genre":"Rock","track":2,"discNumber":1,"year":2023,"duration":180,"bitRate":320,"path":"/music/song.mp3","size":123456,"contentType":"audio/flac","suffix":"flac","created":"2023-01-01T10:00:00Z"}]}}}`
 				return &http.Response{
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader(body)),
@@ -64,6 +64,24 @@ func TestListTracks(t *testing.T) {
 		}
 		if tracks[0].Duration != 180*time.Second {
 			t.Fatalf("unexpected duration %v", tracks[0].Duration)
+		}
+		track := tracks[0]
+		if track.ArtistID != "artist1" ||
+			track.AlbumID != "album1" ||
+			track.AlbumArtist != "AlbumArtist" ||
+			ptrToString(track.Genre) != "Rock" ||
+			ptrToInt(track.TrackNumber) != 2 ||
+			ptrToInt(track.DiscNumber) != 1 ||
+			ptrToInt(track.Year) != 2023 ||
+			ptrToInt(track.BitRate) != 320 ||
+			ptrToInt64(track.FileSize) != 123456 ||
+			ptrToString(track.ContentType) != "audio/flac" ||
+			track.Suffix != "flac" ||
+			track.Path != "/music/song.mp3" {
+			t.Fatalf("unexpected track fields %+v", track)
+		}
+		if track.CreatedAt.IsZero() {
+			t.Fatalf("expected created timestamp")
 		}
 		if call != 2 {
 			t.Fatalf("expected two requests, got %d", call)
@@ -106,4 +124,25 @@ func mockHTTPClient(fn roundTripFunc) *http.Client {
 		Timeout:   time.Second,
 		Transport: fn,
 	}
+}
+
+func ptrToString(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return *v
+}
+
+func ptrToInt(v *int) int {
+	if v == nil {
+		return 0
+	}
+	return *v
+}
+
+func ptrToInt64(v *int64) int64 {
+	if v == nil {
+		return 0
+	}
+	return *v
 }

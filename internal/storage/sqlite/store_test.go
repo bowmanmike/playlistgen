@@ -8,7 +8,9 @@ import (
 	"time"
 )
 
-import "github.com/bowmanmike/playlistgen/internal/app"
+import (
+	"github.com/bowmanmike/playlistgen/internal/app"
+)
 
 func TestNewRequiresPath(t *testing.T) {
 	if _, err := New(Config{}); err == nil {
@@ -24,13 +26,59 @@ func TestSaveTracks(t *testing.T) {
 	}
 	t.Cleanup(func() { store.Close() })
 
-	tracks := []app.Track{{ID: "1", Title: "Song", Duration: 120 * time.Second}}
+	genre := "Rock"
+	year := 2020
+	trackNo := 3
+	discNo := 1
+	bitrate := 320
+	size := int64(123456)
+	contentType := "audio/flac"
+	tracks := []app.Track{{
+		ID:          "nav1",
+		Title:       "Song",
+		Artist:      "Artist",
+		ArtistID:    "artist1",
+		Album:       "Album",
+		AlbumID:     "album1",
+		AlbumArtist: "AlbumArtist",
+		Genre:       &genre,
+		Year:        &year,
+		TrackNumber: &trackNo,
+		DiscNumber:  &discNo,
+		Duration:    120 * time.Second,
+		BitRate:     &bitrate,
+		FileSize:    &size,
+		Path:        "/music/song.mp3",
+		ContentType: &contentType,
+		Suffix:      "flac",
+		CreatedAt:   time.Unix(1000, 0),
+	}}
 	if err := store.SaveTracks(context.Background(), tracks); err != nil {
 		t.Fatalf("save tracks: %v", err)
 	}
 
 	// upsert
-	tracks = []app.Track{{ID: "1", Title: "New", Duration: 180 * time.Second}}
+	duration := 180 * time.Second
+	tracks = []app.Track{{
+		ID:          "nav1",
+		Title:       "New",
+		Artist:      "Artist",
+		ArtistID:    "artist1",
+		Album:       "Album",
+		AlbumID:     "album1",
+		AlbumArtist: "AlbumArtist",
+		Genre:       &genre,
+		Year:        &year,
+		TrackNumber: &trackNo,
+		DiscNumber:  &discNo,
+		Duration:    duration,
+		BitRate:     &bitrate,
+		FileSize:    &size,
+		Path:        "/music/song.mp3",
+		ContentType: &contentType,
+		Suffix:      "flac",
+		CreatedAt:   time.Unix(1000, 0),
+	}}
 	if err := store.SaveTracks(context.Background(), tracks); err != nil {
 		t.Fatalf("save tracks second: %v", err)
 	}
@@ -42,12 +90,18 @@ func TestSaveTracks(t *testing.T) {
 	defer db.Close()
 
 	var title string
-	var duration int
-	if err := db.QueryRow("SELECT title, duration_seconds FROM tracks WHERE id=?", "1").Scan(&title, &duration); err != nil {
+	var durationSec int
+	var artist string
+	var bitrateOut sql.NullInt64
+	var created string
+	if err := db.QueryRow("SELECT title, duration_seconds, artist, bitrate, created_at FROM tracks WHERE navidrome_id=?", "nav1").Scan(&title, &durationSec, &artist, &bitrateOut, &created); err != nil {
 		t.Fatalf("query track: %v", err)
 	}
 
-	if title != "New" || duration != 180 {
-		t.Fatalf("unexpected record title=%s duration=%d", title, duration)
+	if title != "New" || durationSec != 180 || artist != "Artist" || !bitrateOut.Valid || bitrateOut.Int64 != int64(bitrate) {
+		t.Fatalf("unexpected record")
+	}
+	if created == "" {
+		t.Fatalf("expected created timestamp")
 	}
 }

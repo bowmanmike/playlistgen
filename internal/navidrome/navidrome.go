@@ -132,13 +132,54 @@ func (c *Client) fetchAlbumSongs(ctx context.Context, albumID string) ([]app.Tra
 
 	songs := make([]app.Track, 0, len(resp.Response.Album.Songs))
 	for _, song := range resp.Response.Album.Songs {
+		createdAt := parseSubsonicTime(song.Created)
+		var genre *string
+		if strings.TrimSpace(song.Genre) != "" {
+			genre = &song.Genre
+		}
+		var year *int
+		if song.Year != 0 {
+			year = &song.Year
+		}
+		var trackNum *int
+		if song.Track != 0 {
+			trackNum = &song.Track
+		}
+		var discNum *int
+		if song.DiscNumber != 0 {
+			discNum = &song.DiscNumber
+		}
+		var bitrate *int
+		if song.BitRate != 0 {
+			bitrate = &song.BitRate
+		}
+		var size *int64
+		if song.Size != 0 {
+			size = &song.Size
+		}
+		var contentType *string
+		if strings.TrimSpace(song.ContentType) != "" {
+			contentType = &song.ContentType
+		}
 		songs = append(songs, app.Track{
-			ID:       song.ID,
-			Title:    song.Title,
-			Artist:   song.Artist,
-			Album:    song.Album,
-			Duration: time.Duration(song.Duration) * time.Second,
-			Path:     song.Path,
+			ID:          song.ID,
+			Title:       song.Title,
+			Artist:      song.Artist,
+			ArtistID:    song.ArtistID,
+			Album:       song.Album,
+			AlbumID:     song.AlbumID,
+			AlbumArtist: song.AlbumArtist,
+			Genre:       genre,
+			Year:        year,
+			TrackNumber: trackNum,
+			DiscNumber:  discNum,
+			Duration:    time.Duration(song.Duration) * time.Second,
+			BitRate:     bitrate,
+			FileSize:    size,
+			Path:        song.Path,
+			ContentType: contentType,
+			Suffix:      song.Suffix,
+			CreatedAt:   createdAt,
 		})
 	}
 
@@ -221,6 +262,23 @@ func ensureLeadingSlash(p string) string {
 	return p
 }
 
+func parseSubsonicTime(value string) time.Time {
+	if strings.TrimSpace(value) == "" {
+		return time.Time{}
+	}
+	layouts := []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02T15:04:05",
+	}
+	for _, layout := range layouts {
+		if ts, err := time.Parse(layout, value); err == nil {
+			return ts
+		}
+	}
+	return time.Time{}
+}
+
 type albumListResponse struct {
 	Response albumListPayload `json:"subsonic-response"`
 }
@@ -268,10 +326,22 @@ type albumItem struct {
 }
 
 type songItem struct {
-	ID       string `json:"id"`
-	Title    string `json:"title"`
-	Artist   string `json:"artist"`
-	Album    string `json:"album"`
-	Duration int    `json:"duration"`
-	Path     string `json:"path"`
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Artist      string `json:"artist"`
+	ArtistID    string `json:"artistId"`
+	Album       string `json:"album"`
+	AlbumID     string `json:"albumId"`
+	AlbumArtist string `json:"albumArtist"`
+	Genre       string `json:"genre"`
+	Track       int    `json:"track"`
+	DiscNumber  int    `json:"discNumber"`
+	Year        int    `json:"year"`
+	Duration    int    `json:"duration"`
+	BitRate     int    `json:"bitRate"`
+	Path        string `json:"path"`
+	Size        int64  `json:"size"`
+	ContentType string `json:"contentType"`
+	Suffix      string `json:"suffix"`
+	Created     string `json:"created"`
 }

@@ -9,12 +9,24 @@ import (
 
 // Track represents normalized track metadata used internally.
 type Track struct {
-	ID       string
-	Title    string
-	Artist   string
-	Album    string
-	Duration time.Duration
-	Path     string
+	ID          string
+	Title       string
+	Artist      string
+	ArtistID    string
+	Album       string
+	AlbumID     string
+	AlbumArtist string
+	Genre       *string
+	Year        *int
+	TrackNumber *int
+	DiscNumber  *int
+	Duration    time.Duration
+	BitRate     *int
+	FileSize    *int64
+	Path        string
+	ContentType *string
+	Suffix      string
+	CreatedAt   time.Time
 }
 
 // NavidromePort fetches tracks from Navidrome.

@@ -46,13 +46,34 @@ func New(cfg Config) (*Store, error) {
 
 func bootstrap(db *sql.DB) error {
 	const schema = `CREATE TABLE IF NOT EXISTS tracks (
-        id TEXT PRIMARY KEY,
-        title TEXT,
-        artist TEXT,
-        album TEXT,
-        duration_seconds INTEGER,
-        path TEXT
-    );`
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    navidrome_id TEXT NOT NULL UNIQUE,
+    title TEXT NOT NULL,
+    artist TEXT NOT NULL,
+    artist_id TEXT,
+    album TEXT NOT NULL,
+    album_id TEXT,
+    album_artist TEXT,
+    genre TEXT,
+    year INTEGER,
+    track_number INTEGER,
+    disc_number INTEGER,
+    duration_seconds INTEGER NOT NULL DEFAULT 0,
+    bitrate INTEGER,
+    file_size INTEGER,
+    path TEXT NOT NULL,
+    content_type TEXT,
+    suffix TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_tracks_artist ON tracks(artist);
+CREATE INDEX IF NOT EXISTS idx_tracks_album ON tracks(album);
+CREATE INDEX IF NOT EXISTS idx_tracks_title ON tracks(title);
+CREATE INDEX IF NOT EXISTS idx_tracks_navidrome_id ON tracks(navidrome_id);
+CREATE INDEX IF NOT EXISTS idx_tracks_genre ON tracks(genre);
+CREATE INDEX IF NOT EXISTS idx_tracks_year ON tracks(year);
+`
 	_, err := db.Exec(schema)
 	return err
 }
@@ -68,14 +89,26 @@ func (s *Store) SaveTracks(ctx context.Context, tracks []app.Track) error {
 		return fmt.Errorf("begin tx: %w", err)
 	}
 
-	stmt, err := tx.PrepareContext(ctx, `INSERT INTO tracks (id, title, artist, album, duration_seconds, path)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO tracks (navidrome_id, title, artist, artist_id, album, album_id, album_artist, genre, year, track_number, disc_number, duration_seconds, bitrate, file_size, path, content_type, suffix, created_at)
+	        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(navidrome_id) DO UPDATE SET
             title=excluded.title,
             artist=excluded.artist,
+            artist_id=excluded.artist_id,
             album=excluded.album,
+            album_id=excluded.album_id,
+            album_artist=excluded.album_artist,
+            genre=excluded.genre,
+            year=excluded.year,
+            track_number=excluded.track_number,
+            disc_number=excluded.disc_number,
             duration_seconds=excluded.duration_seconds,
-            path=excluded.path`)
+            bitrate=excluded.bitrate,
+            file_size=excluded.file_size,
+            path=excluded.path,
+            content_type=excluded.content_type,
+            suffix=excluded.suffix,
+            created_at=excluded.created_at`)
 	if err != nil {
 		tx.Rollback()
 		return fmt.Errorf("prepare stmt: %w", err)
@@ -87,9 +120,21 @@ func (s *Store) SaveTracks(ctx context.Context, tracks []app.Track) error {
 			tr.ID,
 			tr.Title,
 			tr.Artist,
+			tr.ArtistID,
 			tr.Album,
+			tr.AlbumID,
+			tr.AlbumArtist,
+			nullString(tr.Genre),
+			nullInt(tr.Year),
+			nullInt(tr.TrackNumber),
+			nullInt(tr.DiscNumber),
 			int(tr.Duration/time.Second),
+			nullInt(tr.BitRate),
+			nullInt64(tr.FileSize),
 			tr.Path,
+			nullString(tr.ContentType),
+			tr.Suffix,
+			tr.CreatedAt.Format(time.RFC3339Nano),
 		); err != nil {
 			tx.Rollback()
 			return fmt.Errorf("exec insert: %w", err)
@@ -109,4 +154,25 @@ func (s *Store) Close() error {
 		return nil
 	}
 	return s.db.Close()
+}
+
+func nullString(v *string) interface{} {
+	if v == nil {
+		return nil
+	}
+	return *v
+}
+
+func nullInt(v *int) interface{} {
+	if v == nil {
+		return nil
+	}
+	return *v
+}
+
+func nullInt64(v *int64) interface{} {
+	if v == nil {
+		return nil
+	}
+	return *v
 }
