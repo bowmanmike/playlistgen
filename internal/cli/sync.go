@@ -27,6 +27,10 @@ func newSyncCmd(opts *options) *cobra.Command {
 }
 
 func runSync(ctx context.Context, cmd *cobra.Command, opts *options) error {
+	if err := opts.ensureLogger(cmd.ErrOrStderr()); err != nil {
+		return fmt.Errorf("init logger: %w", err)
+	}
+
 	opts.populateFromEnv()
 
 	if opts.navidromeURL == "" {
@@ -36,9 +40,11 @@ func runSync(ctx context.Context, cmd *cobra.Command, opts *options) error {
 		return errors.New("navidrome username and password must be set via flags or environment")
 	}
 
-	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "Navidrome URL: %s\n", opts.navidromeURL)
-	fmt.Fprintf(out, "Navidrome user: %s\n", opts.navidromeUsername)
+	logger := opts.logger
+	logger.Info("starting navidrome sync",
+		"navidrome_url", opts.navidromeURL,
+		"navidrome_user", opts.navidromeUsername,
+	)
 
 	client, err := opts.newNavidromeClient(navidrome.Config{
 		BaseURL:  opts.navidromeURL,
@@ -76,9 +82,9 @@ func runSync(ctx context.Context, cmd *cobra.Command, opts *options) error {
 		}
 	}
 	if persistenceOn {
-		fmt.Fprintf(out, "Track store path: %s\n", resolvedStorePath)
+		logger.Info("track store configured", "db_path", resolvedStorePath)
 	} else {
-		fmt.Fprintln(out, "Track store disabled (no db-path provided)")
+		logger.Info("track store disabled", "reason", "no db-path provided")
 	}
 
 	appInstance, err := opts.newApp(app.Dependencies{
@@ -94,10 +100,12 @@ func runSync(ctx context.Context, cmd *cobra.Command, opts *options) error {
 		return fmt.Errorf("sync tracks: %w", err)
 	}
 
-	if persistenceOn {
-		fmt.Fprintf(out, "Updated %d tracks (skipped %d, deleted %d)\n", stats.Updated, stats.Skipped, stats.Deleted)
-	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Fetched %d tracks\n", stats.Fetched)
+	logger.Info("navidrome sync complete",
+		"fetched", stats.Fetched,
+		"updated", stats.Updated,
+		"skipped", stats.Skipped,
+		"deleted", stats.Deleted,
+	)
 	return nil
 }
 

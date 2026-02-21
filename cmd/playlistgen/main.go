@@ -1,13 +1,15 @@
 package main
 
 import (
-	"log"
+	"log/slog"
+	"os"
 
 	"github.com/bowmanmike/playlistgen/internal/cli"
 )
 
 func main() {
 	if err := cli.Execute(); err != nil {
-		log.Fatal(err)
+		slog.Error("command failed", "error", err)
+		os.Exit(1)
 	}
 }

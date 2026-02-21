@@ -38,6 +38,7 @@ func TestRunSync(t *testing.T) {
 		out := &bytes.Buffer{}
 		cmd := &cobra.Command{}
 		cmd.SetOut(out)
+		cmd.SetErr(out)
 
 		store := &trackStoreStub{}
 		dbPath := filepath.Join(t.TempDir(), "tracks", "db.sqlite")
@@ -60,6 +61,7 @@ func TestRunSync(t *testing.T) {
 			newApp: func(deps app.Dependencies) (*app.App, error) {
 				return app.New(deps)
 			},
+			logFormat: "text",
 		}
 
 		if err := runSync(context.Background(), cmd, opts); err != nil {
@@ -68,11 +70,16 @@ func TestRunSync(t *testing.T) {
 
 		got := out.String()
 		for _, want := range []string{
-			"Navidrome URL: https://navidrome.local",
-			"Navidrome user: user",
-			"Track store path: " + dbPath,
-			"Updated 2 tracks (skipped 0, deleted 0)",
-			"Fetched 2 tracks",
+			`msg="starting navidrome sync"`,
+			"navidrome_url=https://navidrome.local",
+			"navidrome_user=user",
+			`msg="track store configured"`,
+			"db_path=" + dbPath,
+			`msg="navidrome sync complete"`,
+			"fetched=2",
+			"updated=2",
+			"skipped=0",
+			"deleted=0",
 		} {
 			if !strings.Contains(got, want) {
 				t.Fatalf("expected output to contain %q, actual: %q", want, got)
