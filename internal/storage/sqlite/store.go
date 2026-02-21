@@ -37,6 +37,11 @@ func New(cfg Config) (*Store, error) {
 	db.SetMaxIdleConns(1)
 	db.SetConnMaxLifetime(time.Hour)
 
+	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("enable foreign keys: %w", err)
+	}
+
 	if err := migrations.Run(db); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("run migrations: %w", err)
@@ -45,7 +50,7 @@ func New(cfg Config) (*Store, error) {
 	return &Store{db: db}, nil
 }
 
-// SaveTracks inserts or replaces provided tracks.
+// SaveTracks inserts or replaces provided tracks and records sync metadata.
 func (s *Store) SaveTracks(ctx context.Context, tracks []app.Track) error {
 	if len(tracks) == 0 {
 		return nil
@@ -56,34 +61,31 @@ func (s *Store) SaveTracks(ctx context.Context, tracks []app.Track) error {
 		return fmt.Errorf("begin tx: %w", err)
 	}
 
-	stmt, err := tx.PrepareContext(ctx, `INSERT INTO tracks (navidrome_id, title, artist, artist_id, album, album_id, album_artist, genre, year, track_number, disc_number, duration_seconds, bitrate, file_size, path, content_type, suffix, created_at)
-	        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(navidrome_id) DO UPDATE SET
-            title=excluded.title,
-            artist=excluded.artist,
-            artist_id=excluded.artist_id,
-            album=excluded.album,
-            album_id=excluded.album_id,
-            album_artist=excluded.album_artist,
-            genre=excluded.genre,
-            year=excluded.year,
-            track_number=excluded.track_number,
-            disc_number=excluded.disc_number,
-            duration_seconds=excluded.duration_seconds,
-            bitrate=excluded.bitrate,
-            file_size=excluded.file_size,
-            path=excluded.path,
-            content_type=excluded.content_type,
-            suffix=excluded.suffix,
-            created_at=excluded.created_at`)
+	syncID, err := createSync(ctx, tx)
 	if err != nil {
 		tx.Rollback()
-		return fmt.Errorf("prepare stmt: %w", err)
+		return err
 	}
-	defer stmt.Close()
+
+	trackStmt, err := tx.PrepareContext(ctx, insertTrackSQL)
+	if err != nil {
+		tx.Rollback()
+		return fmt.Errorf("prepare track stmt: %w", err)
+	}
+	defer trackStmt.Close()
+
+	statusStmt, err := tx.PrepareContext(ctx, upsertTrackSyncStatusSQL)
+	if err != nil {
+		tx.Rollback()
+		return fmt.Errorf("prepare status stmt: %w", err)
+	}
+	defer statusStmt.Close()
+
+	processed, updated := 0, 0
 
 	for _, tr := range tracks {
-		if _, err := stmt.ExecContext(ctx,
+		processed++
+		_, err := trackStmt.ExecContext(ctx,
 			tr.ID,
 			tr.Title,
 			tr.Artist,
@@ -102,16 +104,63 @@ func (s *Store) SaveTracks(ctx context.Context, tracks []app.Track) error {
 			nullString(tr.ContentType),
 			tr.Suffix,
 			tr.CreatedAt.Format(time.RFC3339Nano),
-		); err != nil {
+		)
+		if err != nil {
 			tx.Rollback()
-			return fmt.Errorf("exec insert: %w", err)
+			return fmt.Errorf("exec insert track: %w", err)
 		}
+		updated++
+
+		trackID, err := fetchTrackID(ctx, tx, tr.ID)
+		if err != nil {
+			tx.Rollback()
+			return err
+		}
+
+		if _, err := statusStmt.ExecContext(ctx, trackID, tr.ID, time.Now().Format(time.RFC3339Nano), syncID); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("update track sync status: %w", err)
+		}
+	}
+
+	if err := completeSync(ctx, tx, syncID, processed, updated, "completed"); err != nil {
+		tx.Rollback()
+		return err
 	}
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit tx: %w", err)
 	}
 
+	return nil
+}
+
+func fetchTrackID(ctx context.Context, tx *sql.Tx, navidromeID string) (int64, error) {
+	var id int64
+	if err := tx.QueryRowContext(ctx, "SELECT id FROM tracks WHERE navidrome_id = ?", navidromeID).Scan(&id); err != nil {
+		return 0, fmt.Errorf("fetch track id: %w", err)
+	}
+	return id, nil
+}
+
+func createSync(ctx context.Context, tx *sql.Tx) (int64, error) {
+	now := time.Now().Format(time.RFC3339Nano)
+	res, err := tx.ExecContext(ctx, createSyncSQL, now)
+	if err != nil {
+		return 0, fmt.Errorf("create sync: %w", err)
+	}
+	syncID, err := res.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("sync last insert id: %w", err)
+	}
+	return syncID, nil
+}
+
+func completeSync(ctx context.Context, tx *sql.Tx, syncID int64, processed, updated int, status string) error {
+	now := time.Now().Format(time.RFC3339Nano)
+	if _, err := tx.ExecContext(ctx, completeSyncSQL, now, status, processed, updated, syncID); err != nil {
+		return fmt.Errorf("complete sync: %w", err)
+	}
 	return nil
 }
 

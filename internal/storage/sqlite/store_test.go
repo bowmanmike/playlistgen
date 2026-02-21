@@ -6,9 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
-)
 
-import (
 	"github.com/bowmanmike/playlistgen/internal/app"
 )
 
@@ -103,5 +101,35 @@ func TestSaveTracks(t *testing.T) {
 	}
 	if created == "" {
 		t.Fatalf("expected created timestamp")
+	}
+
+	var syncCount int
+	if err := db.QueryRow("SELECT COUNT(*) FROM navidrome_syncs").Scan(&syncCount); err != nil {
+		t.Fatalf("count syncs: %v", err)
+	}
+	if syncCount != 2 {
+		t.Fatalf("expected 2 sync records, got %d", syncCount)
+	}
+
+	var lastSyncID int64
+	var status, completedAt string
+	var processed, updated int
+	if err := db.QueryRow("SELECT id, status, completed_at, tracks_processed, tracks_updated FROM navidrome_syncs ORDER BY id DESC LIMIT 1").Scan(&lastSyncID, &status, &completedAt, &processed, &updated); err != nil {
+		t.Fatalf("query last sync: %v", err)
+	}
+	if status != "completed" || completedAt == "" {
+		t.Fatalf("sync status not recorded")
+	}
+	if processed != 1 || updated != 1 {
+		t.Fatalf("unexpected sync counts processed=%d updated=%d", processed, updated)
+	}
+
+	var syncFK int64
+	var lastSynced string
+	if err := db.QueryRow("SELECT sync_id, last_synced_at FROM navidrome_track_sync_status WHERE navidrome_id=?", "nav1").Scan(&syncFK, &lastSynced); err != nil {
+		t.Fatalf("query track sync status: %v", err)
+	}
+	if syncFK != lastSyncID || lastSynced == "" {
+		t.Fatalf("unexpected track sync status")
 	}
 }
