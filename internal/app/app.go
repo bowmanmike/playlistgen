@@ -27,6 +27,7 @@ type Track struct {
 	ContentType *string
 	Suffix      string
 	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // NavidromePort fetches tracks from Navidrome.
@@ -36,7 +37,15 @@ type NavidromePort interface {
 
 // TrackStore persists tracks to storage.
 type TrackStore interface {
-	SaveTracks(ctx context.Context, tracks []Track) error
+	SaveTracks(ctx context.Context, tracks []Track) (SaveStats, error)
+}
+
+// SaveStats reports sync outcomes.
+type SaveStats struct {
+	Fetched int
+	Updated int
+	Skipped int
+	Deleted int
 }
 
 // Dependencies groups external adapters required by the App.
@@ -64,17 +73,22 @@ func New(deps Dependencies) (*App, error) {
 }
 
 // SyncTracks pulls tracks from Navidrome and optionally persists them.
-func (a *App) SyncTracks(ctx context.Context) (int, error) {
+func (a *App) SyncTracks(ctx context.Context) (SaveStats, error) {
 	tracks, err := a.navidrome.ListTracks(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("fetch tracks: %w", err)
+		return SaveStats{}, fmt.Errorf("fetch tracks: %w", err)
 	}
 
+	stats := SaveStats{Fetched: len(tracks)}
 	if a.store != nil {
-		if err := a.store.SaveTracks(ctx, tracks); err != nil {
-			return 0, fmt.Errorf("save tracks: %w", err)
+		storeStats, err := a.store.SaveTracks(ctx, tracks)
+		if err != nil {
+			return SaveStats{}, fmt.Errorf("save tracks: %w", err)
 		}
+		stats.Updated = storeStats.Updated
+		stats.Skipped = storeStats.Skipped
+		stats.Deleted = storeStats.Deleted
 	}
 
-	return len(tracks), nil
+	return stats, nil
 }

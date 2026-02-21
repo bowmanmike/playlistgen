@@ -1,3 +1,4 @@
+-- name: UpsertTrack :exec
 INSERT INTO tracks (
   navidrome_id,
   title,
@@ -50,3 +51,6 @@ INSERT INTO navidrome_track_sync_status (
 ON CONFLICT(track_id) DO UPDATE SET
   last_synced_at = excluded.last_synced_at,
   sync_id = excluded.sync_id;
+
+-- name: ListTrackSyncStatus :many
+SELECT track_id, navidrome_id, last_synced_at FROM navidrome_track_sync_status;

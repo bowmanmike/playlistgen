@@ -32,7 +32,7 @@ func TestListTracks(t *testing.T) {
 				if req.URL.Query().Get("id") != "alb1" {
 					t.Fatalf("unexpected album id %s", req.URL.Query().Get("id"))
 				}
-				body := `{"subsonic-response":{"status":"ok","album":{"song":[{"id":"1","title":"Song","artist":"Artist","artistId":"artist1","album":"Album","albumId":"album1","albumArtist":"AlbumArtist","genre":"Rock","track":2,"discNumber":1,"year":2023,"duration":180,"bitRate":320,"path":"/music/song.mp3","size":123456,"contentType":"audio/flac","suffix":"flac","created":"2023-01-01T10:00:00Z"}]}}}`
+				body := `{"subsonic-response":{"status":"ok","album":{"song":[{"id":"1","title":"Song","artist":"Artist","artistId":"artist1","album":"Album","albumId":"album1","albumArtist":"AlbumArtist","genre":"Rock","track":2,"discNumber":1,"year":2023,"duration":180,"bitRate":320,"path":"/music/song.mp3","size":123456,"contentType":"audio/flac","suffix":"flac","created":"2023-01-01T10:00:00Z","changed":"2023-01-02T10:00:00Z"}]}}}`
 				return &http.Response{
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader(body)),
@@ -82,6 +82,9 @@ func TestListTracks(t *testing.T) {
 		}
 		if track.CreatedAt.IsZero() {
 			t.Fatalf("expected created timestamp")
+		}
+		if track.UpdatedAt.IsZero() {
+			t.Fatalf("expected changed timestamp")
 		}
 		if call != 2 {
 			t.Fatalf("expected two requests, got %d", call)

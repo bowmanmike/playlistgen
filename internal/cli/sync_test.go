@@ -71,7 +71,7 @@ func TestRunSync(t *testing.T) {
 			"Navidrome URL: https://navidrome.local",
 			"Navidrome user: user",
 			"Track store path: " + dbPath,
-			"Persisted 2 tracks to " + dbPath,
+			"Updated 2 tracks (skipped 0, deleted 0)",
 			"Fetched 2 tracks",
 		} {
 			if !strings.Contains(got, want) {
@@ -161,7 +161,7 @@ type trackStoreStub struct {
 	saved bool
 }
 
-func (s *trackStoreStub) SaveTracks(ctx context.Context, tracks []app.Track) error {
+func (s *trackStoreStub) SaveTracks(ctx context.Context, tracks []app.Track) (app.SaveStats, error) {
 	s.saved = true
-	return nil
+	return app.SaveStats{Updated: len(tracks)}, nil
 }

@@ -10,6 +10,50 @@ import (
 	"database/sql"
 )
 
+const listTrackSyncStatus = `-- name: ListTrackSyncStatus :many
+SELECT track_id, navidrome_id, last_synced_at FROM navidrome_track_sync_status
+`
+
+type ListTrackSyncStatusRow struct {
+	TrackID      int64  `json:"track_id"`
+	NavidromeID  string `json:"navidrome_id"`
+	LastSyncedAt string `json:"last_synced_at"`
+}
+
+func (q *Queries) ListTrackSyncStatus(ctx context.Context) ([]ListTrackSyncStatusRow, error) {
+	rows, err := q.db.QueryContext(ctx, listTrackSyncStatus)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTrackSyncStatusRow
+	for rows.Next() {
+		var i ListTrackSyncStatusRow
+		if err := rows.Scan(&i.TrackID, &i.NavidromeID, &i.LastSyncedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const selectTrackID = `-- name: SelectTrackID :one
+SELECT id FROM tracks WHERE navidrome_id = ?
+`
+
+func (q *Queries) SelectTrackID(ctx context.Context, navidromeID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, selectTrackID, navidromeID)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
 const upsertTrack = `-- name: UpsertTrack :exec
 INSERT INTO tracks (
   navidrome_id,
@@ -94,17 +138,6 @@ func (q *Queries) UpsertTrack(ctx context.Context, arg UpsertTrackParams) error 
 		arg.CreatedAt,
 	)
 	return err
-}
-
-const selectTrackID = `-- name: SelectTrackID :one
-SELECT id FROM tracks WHERE navidrome_id = ?
-`
-
-func (q *Queries) SelectTrackID(ctx context.Context, navidromeID string) (int64, error) {
-	row := q.db.QueryRowContext(ctx, selectTrackID, navidromeID)
-	var id int64
-	err := row.Scan(&id)
-	return id, err
 }
 
 const upsertTrackSyncStatus = `-- name: UpsertTrackSyncStatus :exec

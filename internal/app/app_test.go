@@ -43,12 +43,15 @@ func TestSyncTracks(t *testing.T) {
 			t.Fatalf("new app: %v", err)
 		}
 
-		n, err := app.SyncTracks(context.Background())
+		stats, err := app.SyncTracks(context.Background())
 		if err != nil {
 			t.Fatalf("sync tracks: %v", err)
 		}
-		if n != len(tracks) {
-			t.Fatalf("expected %d got %d", len(tracks), n)
+		if stats.Fetched != len(tracks) {
+			t.Fatalf("expected %d fetched got %d", len(tracks), stats.Fetched)
+		}
+		if stats.Updated != len(tracks) {
+			t.Fatalf("expected updated count propagate")
 		}
 		if !store.saved {
 			t.Fatalf("expected store to be called")
@@ -81,15 +84,15 @@ type storeStub struct {
 	saved bool
 }
 
-func (s *storeStub) SaveTracks(ctx context.Context, tracks []Track) error {
+func (s *storeStub) SaveTracks(ctx context.Context, tracks []Track) (SaveStats, error) {
 	s.saved = true
-	return nil
+	return SaveStats{Updated: len(tracks)}, nil
 }
 
 type storeStubErr struct {
 	err error
 }
 
-func (e storeStubErr) SaveTracks(ctx context.Context, tracks []Track) error {
-	return e.err
+func (e storeStubErr) SaveTracks(ctx context.Context, tracks []Track) (SaveStats, error) {
+	return SaveStats{}, e.err
 }

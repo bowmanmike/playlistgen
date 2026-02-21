@@ -53,14 +53,15 @@ func New(cfg Config) (*Store, error) {
 }
 
 // SaveTracks inserts or replaces provided tracks and records sync metadata.
-func (s *Store) SaveTracks(ctx context.Context, tracks []app.Track) error {
+func (s *Store) SaveTracks(ctx context.Context, tracks []app.Track) (app.SaveStats, error) {
+	stats := app.SaveStats{Fetched: len(tracks)}
 	if len(tracks) == 0 {
-		return nil
+		return stats, nil
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
+		return app.SaveStats{}, fmt.Errorf("begin tx: %w", err)
 	}
 
 	queries := db.New(tx)
@@ -68,34 +69,72 @@ func (s *Store) SaveTracks(ctx context.Context, tracks []app.Track) error {
 	syncID, err := queries.CreateSync(ctx, startedAt)
 	if err != nil {
 		tx.Rollback()
-		return fmt.Errorf("create sync: %w", err)
+		return app.SaveStats{}, fmt.Errorf("create sync: %w", err)
+	}
+
+	statusRows, err := queries.ListTrackSyncStatus(ctx)
+	if err != nil {
+		tx.Rollback()
+		return app.SaveStats{}, fmt.Errorf("list track sync statuses: %w", err)
+	}
+
+	statusMap := make(map[string]trackSyncStatus, len(statusRows))
+	for _, row := range statusRows {
+		statusMap[row.NavidromeID] = trackSyncStatus{
+			trackID:      row.TrackID,
+			lastSyncedAt: parseTimestamp(row.LastSyncedAt),
+		}
 	}
 
 	processed, updated := 0, 0
-	syncedAt := nowUTC()
 
 	for _, tr := range tracks {
 		processed++
+		status := statusMap[tr.ID]
+		remoteChanged := trackChangedAt(tr)
+
+		if status.trackID != 0 && !remoteChanged.IsZero() && !remoteChanged.After(status.lastSyncedAt) {
+			if err := queries.UpsertTrackSyncStatus(ctx, db.UpsertTrackSyncStatusParams{
+				TrackID:      status.trackID,
+				NavidromeID:  tr.ID,
+				LastSyncedAt: formatTimestamp(status.lastSyncedAt),
+				SyncID:       syncID,
+			}); err != nil {
+				tx.Rollback()
+				return app.SaveStats{}, fmt.Errorf("touch track sync status: %w", err)
+			}
+			continue
+		}
+
 		if err := queries.UpsertTrack(ctx, convertTrack(tr)); err != nil {
 			tx.Rollback()
-			return fmt.Errorf("upsert track: %w", err)
+			return app.SaveStats{}, fmt.Errorf("upsert track: %w", err)
 		}
 		updated++
 
-		trackID, err := queries.SelectTrackID(ctx, tr.ID)
-		if err != nil {
-			tx.Rollback()
-			return fmt.Errorf("select track id: %w", err)
+		trackID := status.trackID
+		if trackID == 0 {
+			var err error
+			trackID, err = queries.SelectTrackID(ctx, tr.ID)
+			if err != nil {
+				tx.Rollback()
+				return app.SaveStats{}, fmt.Errorf("select track id: %w", err)
+			}
 		}
 
+		syncedAt := time.Now().UTC()
 		if err := queries.UpsertTrackSyncStatus(ctx, db.UpsertTrackSyncStatusParams{
 			TrackID:      trackID,
 			NavidromeID:  tr.ID,
-			LastSyncedAt: syncedAt,
+			LastSyncedAt: formatTimestamp(syncedAt),
 			SyncID:       syncID,
 		}); err != nil {
 			tx.Rollback()
-			return fmt.Errorf("update track sync status: %w", err)
+			return app.SaveStats{}, fmt.Errorf("update track sync status: %w", err)
+		}
+		statusMap[tr.ID] = trackSyncStatus{
+			trackID:      trackID,
+			lastSyncedAt: syncedAt,
 		}
 	}
 
@@ -108,14 +147,16 @@ func (s *Store) SaveTracks(ctx context.Context, tracks []app.Track) error {
 		ID:              syncID,
 	}); err != nil {
 		tx.Rollback()
-		return fmt.Errorf("complete sync: %w", err)
+		return app.SaveStats{}, fmt.Errorf("complete sync: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit tx: %w", err)
+		return app.SaveStats{}, fmt.Errorf("commit tx: %w", err)
 	}
 
-	return nil
+	stats.Updated = updated
+	stats.Skipped = processed - updated
+	return stats, nil
 }
 
 // Close releases database resources.
@@ -124,6 +165,38 @@ func (s *Store) Close() error {
 		return nil
 	}
 	return s.db.Close()
+}
+
+type trackSyncStatus struct {
+	trackID      int64
+	lastSyncedAt time.Time
+}
+
+func trackChangedAt(tr app.Track) time.Time {
+	if !tr.UpdatedAt.IsZero() {
+		return tr.UpdatedAt
+	}
+	return tr.CreatedAt
+}
+
+func parseTimestamp(value string) time.Time {
+	if strings.TrimSpace(value) == "" {
+		return time.Time{}
+	}
+	if ts, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return ts
+	}
+	if ts, err := time.Parse(time.RFC3339, value); err == nil {
+		return ts
+	}
+	return time.Time{}
+}
+
+func formatTimestamp(ts time.Time) string {
+	if ts.IsZero() {
+		return ""
+	}
+	return ts.Format(time.RFC3339Nano)
 }
 
 func nowUTC() string {

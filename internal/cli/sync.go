@@ -89,15 +89,15 @@ func runSync(ctx context.Context, cmd *cobra.Command, opts *options) error {
 		return fmt.Errorf("init app: %w", err)
 	}
 
-	count, err := appInstance.SyncTracks(ctx)
+	stats, err := appInstance.SyncTracks(ctx)
 	if err != nil {
 		return fmt.Errorf("sync tracks: %w", err)
 	}
 
 	if persistenceOn {
-		fmt.Fprintf(out, "Persisted %d tracks to %s\n", count, resolvedStorePath)
+		fmt.Fprintf(out, "Updated %d tracks (skipped %d, deleted %d)\n", stats.Updated, stats.Skipped, stats.Deleted)
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Fetched %d tracks\n", count)
+	fmt.Fprintf(cmd.OutOrStdout(), "Fetched %d tracks\n", stats.Fetched)
 	return nil
 }
 

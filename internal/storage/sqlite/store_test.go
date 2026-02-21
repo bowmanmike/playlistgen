@@ -31,6 +31,8 @@ func TestSaveTracks(t *testing.T) {
 	bitrate := 320
 	size := int64(123456)
 	contentType := "audio/flac"
+	baseCreated := time.Unix(1000, 0)
+	initialChanged := time.Unix(1500, 0)
 	tracks := []app.Track{{
 		ID:          "nav1",
 		Title:       "Song",
@@ -49,9 +51,10 @@ func TestSaveTracks(t *testing.T) {
 		Path:        "/music/song.mp3",
 		ContentType: &contentType,
 		Suffix:      "flac",
-		CreatedAt:   time.Unix(1000, 0),
+		CreatedAt:   baseCreated,
+		UpdatedAt:   initialChanged,
 	}}
-	if err := store.SaveTracks(context.Background(), tracks); err != nil {
+	if _, err := store.SaveTracks(context.Background(), tracks); err != nil {
 		t.Fatalf("save tracks: %v", err)
 	}
 
@@ -75,10 +78,38 @@ func TestSaveTracks(t *testing.T) {
 		Path:        "/music/song.mp3",
 		ContentType: &contentType,
 		Suffix:      "flac",
-		CreatedAt:   time.Unix(1000, 0),
+		CreatedAt:   baseCreated,
+		UpdatedAt:   initialChanged,
 	}}
-	if err := store.SaveTracks(context.Background(), tracks); err != nil {
+	if _, err := store.SaveTracks(context.Background(), tracks); err != nil {
 		t.Fatalf("save tracks second: %v", err)
+	}
+
+	// change upstream metadata
+	changedAgain := time.Now().Add(2 * time.Hour)
+	tracks = []app.Track{{
+		ID:          "nav1",
+		Title:       "Newest",
+		Artist:      "Artist",
+		ArtistID:    "artist1",
+		Album:       "Album",
+		AlbumID:     "album1",
+		AlbumArtist: "AlbumArtist",
+		Genre:       &genre,
+		Year:        &year,
+		TrackNumber: &trackNo,
+		DiscNumber:  &discNo,
+		Duration:    duration,
+		BitRate:     &bitrate,
+		FileSize:    &size,
+		Path:        "/music/song.mp3",
+		ContentType: &contentType,
+		Suffix:      "flac",
+		CreatedAt:   baseCreated,
+		UpdatedAt:   changedAgain,
+	}}
+	if _, err := store.SaveTracks(context.Background(), tracks); err != nil {
+		t.Fatalf("save tracks third: %v", err)
 	}
 
 	db, err := sql.Open("sqlite", dbPath)
@@ -96,7 +127,7 @@ func TestSaveTracks(t *testing.T) {
 		t.Fatalf("query track: %v", err)
 	}
 
-	if title != "New" || durationSec != 180 || artist != "Artist" || !bitrateOut.Valid || bitrateOut.Int64 != int64(bitrate) {
+	if title != "Newest" || durationSec != 180 || artist != "Artist" || !bitrateOut.Valid || bitrateOut.Int64 != int64(bitrate) {
 		t.Fatalf("unexpected record")
 	}
 	if created == "" {
@@ -107,21 +138,43 @@ func TestSaveTracks(t *testing.T) {
 	if err := db.QueryRow("SELECT COUNT(*) FROM navidrome_syncs").Scan(&syncCount); err != nil {
 		t.Fatalf("count syncs: %v", err)
 	}
-	if syncCount != 2 {
-		t.Fatalf("expected 2 sync records, got %d", syncCount)
+	if syncCount != 3 {
+		t.Fatalf("expected 3 sync records, got %d", syncCount)
+	}
+
+	rows, err := db.Query("SELECT tracks_processed, tracks_updated FROM navidrome_syncs ORDER BY id")
+	if err != nil {
+		t.Fatalf("query sync stats: %v", err)
+	}
+	defer rows.Close()
+	var stats [][2]int
+	for rows.Next() {
+		var processed, updated int
+		if err := rows.Scan(&processed, &updated); err != nil {
+			t.Fatalf("scan stats: %v", err)
+		}
+		stats = append(stats, [2]int{processed, updated})
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("stats rows err: %v", err)
+	}
+	expected := [][2]int{{1, 1}, {1, 0}, {1, 1}}
+	if len(stats) != len(expected) {
+		t.Fatalf("unexpected stats len %d", len(stats))
+	}
+	for i := range expected {
+		if stats[i] != expected[i] {
+			t.Fatalf("unexpected stats[%d]=%v want %v", i, stats[i], expected[i])
+		}
 	}
 
 	var lastSyncID int64
 	var status, completedAt string
-	var processed, updated int
-	if err := db.QueryRow("SELECT id, status, completed_at, tracks_processed, tracks_updated FROM navidrome_syncs ORDER BY id DESC LIMIT 1").Scan(&lastSyncID, &status, &completedAt, &processed, &updated); err != nil {
-		t.Fatalf("query last sync: %v", err)
+	if err := db.QueryRow("SELECT id, status, completed_at FROM navidrome_syncs ORDER BY id DESC LIMIT 1").Scan(&lastSyncID, &status, &completedAt); err != nil {
+		t.Fatalf("query last sync meta: %v", err)
 	}
 	if status != "completed" || completedAt == "" {
 		t.Fatalf("sync status not recorded")
-	}
-	if processed != 1 || updated != 1 {
-		t.Fatalf("unexpected sync counts processed=%d updated=%d", processed, updated)
 	}
 
 	var syncFK int64

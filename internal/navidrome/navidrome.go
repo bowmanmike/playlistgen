@@ -161,6 +161,10 @@ func (c *Client) fetchAlbumSongs(ctx context.Context, albumID string) ([]app.Tra
 		if strings.TrimSpace(song.ContentType) != "" {
 			contentType = &song.ContentType
 		}
+		var updatedAt time.Time
+		if strings.TrimSpace(song.Changed) != "" {
+			updatedAt = parseSubsonicTime(song.Changed)
+		}
 		songs = append(songs, app.Track{
 			ID:          song.ID,
 			Title:       song.Title,
@@ -180,6 +184,7 @@ func (c *Client) fetchAlbumSongs(ctx context.Context, albumID string) ([]app.Tra
 			ContentType: contentType,
 			Suffix:      song.Suffix,
 			CreatedAt:   createdAt,
+			UpdatedAt:   updatedAt,
 		})
 	}
 
@@ -344,4 +349,5 @@ type songItem struct {
 	ContentType string `json:"contentType"`
 	Suffix      string `json:"suffix"`
 	Created     string `json:"created"`
+	Changed     string `json:"changed"`
 }
