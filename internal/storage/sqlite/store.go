@@ -10,6 +10,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/bowmanmike/playlistgen/internal/app"
+	"github.com/bowmanmike/playlistgen/internal/migrations"
 )
 
 // Config drives Store construction.
@@ -36,46 +37,12 @@ func New(cfg Config) (*Store, error) {
 	db.SetMaxIdleConns(1)
 	db.SetConnMaxLifetime(time.Hour)
 
-	if err := bootstrap(db); err != nil {
+	if err := migrations.Run(db); err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("bootstrap schema: %w", err)
+		return nil, fmt.Errorf("run migrations: %w", err)
 	}
 
 	return &Store{db: db}, nil
-}
-
-func bootstrap(db *sql.DB) error {
-	const schema = `CREATE TABLE IF NOT EXISTS tracks (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    navidrome_id TEXT NOT NULL UNIQUE,
-    title TEXT NOT NULL,
-    artist TEXT NOT NULL,
-    artist_id TEXT,
-    album TEXT NOT NULL,
-    album_id TEXT,
-    album_artist TEXT,
-    genre TEXT,
-    year INTEGER,
-    track_number INTEGER,
-    disc_number INTEGER,
-    duration_seconds INTEGER NOT NULL DEFAULT 0,
-    bitrate INTEGER,
-    file_size INTEGER,
-    path TEXT NOT NULL,
-    content_type TEXT,
-    suffix TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_tracks_artist ON tracks(artist);
-CREATE INDEX IF NOT EXISTS idx_tracks_album ON tracks(album);
-CREATE INDEX IF NOT EXISTS idx_tracks_title ON tracks(title);
-CREATE INDEX IF NOT EXISTS idx_tracks_navidrome_id ON tracks(navidrome_id);
-CREATE INDEX IF NOT EXISTS idx_tracks_genre ON tracks(genre);
-CREATE INDEX IF NOT EXISTS idx_tracks_year ON tracks(year);
-`
-	_, err := db.Exec(schema)
-	return err
 }
 
 // SaveTracks inserts or replaces provided tracks.

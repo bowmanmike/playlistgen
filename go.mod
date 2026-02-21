@@ -2,7 +2,10 @@ module github.com/bowmanmike/playlistgen
 
 go 1.26
 
-require github.com/spf13/cobra v1.8.1
+require (
+	github.com/pressly/goose/v3 v3.26.0
+	github.com/spf13/cobra v1.8.1
+)
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
