@@ -50,8 +50,8 @@ func runSync(ctx context.Context, cmd *cobra.Command, opts *options) error {
 	}
 
 	var (
-		store           app.TrackStore
-		persistenceOn   bool
+		store             app.TrackStore
+		persistenceOn     bool
 		resolvedStorePath string
 	)
 	if opts.dbPath != "" {
