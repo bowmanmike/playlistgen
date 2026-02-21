@@ -235,7 +235,36 @@ func TestSaveTracks(t *testing.T) {
 	if remainingNavID != "nav2" {
 		t.Fatalf("expected nav2 to remain, got %s", remainingNavID)
 	}
+	if err := db.QueryRow("SELECT COUNT(*) FROM track_audio_analysis WHERE track_id IN (SELECT id FROM tracks WHERE navidrome_id='nav1')").Scan(&trackCount); err != nil {
+		t.Fatalf("count deleted audio jobs: %v", err)
+	}
+	if trackCount != 0 {
+		t.Fatalf("expected audio job rows removed for nav1, got %d", trackCount)
+	}
 	if err := db.QueryRow("SELECT sync_id, last_synced_at FROM navidrome_track_sync_status WHERE navidrome_id=?", "nav1").Scan(new(sql.NullInt64), new(sql.NullString)); err != sql.ErrNoRows {
 		t.Fatalf("expected nav1 sync status removed, got %v", err)
+	}
+
+	var audioJobCount int
+	if err := db.QueryRow("SELECT COUNT(*) FROM track_audio_analysis WHERE track_id=(SELECT id FROM tracks WHERE navidrome_id=?)", "nav2").Scan(&audioJobCount); err != nil {
+		t.Fatalf("count audio jobs: %v", err)
+	}
+	if audioJobCount != 1 {
+		t.Fatalf("expected audio job row for nav2, got %d", audioJobCount)
+	}
+	var audioStatus string
+	if err := db.QueryRow(`SELECT status FROM track_audio_analysis WHERE track_id=(SELECT id FROM tracks WHERE navidrome_id=?)`, "nav2").Scan(&audioStatus); err != nil {
+		t.Fatalf("query audio job status: %v", err)
+	}
+	if audioStatus != "pending" {
+		t.Fatalf("expected pending audio status, got %s", audioStatus)
+	}
+
+	var embeddingStatus string
+	if err := db.QueryRow(`SELECT status FROM track_embedding_jobs WHERE track_id=(SELECT id FROM tracks WHERE navidrome_id=?)`, "nav2").Scan(&embeddingStatus); err != nil {
+		t.Fatalf("query embedding job status: %v", err)
+	}
+	if embeddingStatus != "pending" {
+		t.Fatalf("expected pending embedding status, got %s", embeddingStatus)
 	}
 }

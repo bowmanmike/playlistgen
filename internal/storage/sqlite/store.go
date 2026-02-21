@@ -140,6 +140,11 @@ func (s *Store) SaveTracks(ctx context.Context, tracks []app.Track) (app.SaveSta
 			trackID:      trackID,
 			lastSyncedAt: syncedAt,
 		}
+
+		if err := resetProcessingJobs(ctx, queries, trackID); err != nil {
+			tx.Rollback()
+			return app.SaveStats{}, err
+		}
 	}
 
 	var toDelete []string
@@ -273,4 +278,31 @@ func nullInt64Ptr(v *int64) sql.NullInt64 {
 		return sql.NullInt64{}
 	}
 	return sql.NullInt64{Int64: *v, Valid: true}
+}
+
+func resetProcessingJobs(ctx context.Context, queries *db.Queries, trackID int64) error {
+	status := "pending"
+	resetValue := sql.NullString{}
+	if err := queries.InsertTrackAudioJob(ctx, db.InsertTrackAudioJobParams{
+		TrackID:       trackID,
+		Status:        status,
+		ProcessedAt:   resetValue,
+		Error:         resetValue,
+		Attempts:      0,
+		LastAttemptAt: resetValue,
+	}); err != nil {
+		return fmt.Errorf("reset audio job: %w", err)
+	}
+
+	if err := queries.InsertTrackEmbeddingJob(ctx, db.InsertTrackEmbeddingJobParams{
+		TrackID:       trackID,
+		Status:        status,
+		ProcessedAt:   resetValue,
+		Error:         resetValue,
+		Attempts:      0,
+		LastAttemptAt: resetValue,
+	}); err != nil {
+		return fmt.Errorf("reset embedding job: %w", err)
+	}
+	return nil
 }

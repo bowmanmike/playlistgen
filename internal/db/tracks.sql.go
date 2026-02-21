@@ -31,6 +31,70 @@ func (q *Queries) DeleteTracksByNavidromeIDs(ctx context.Context, navIds []strin
 	return err
 }
 
+const insertTrackAudioJob = `-- name: InsertTrackAudioJob :exec
+INSERT INTO track_audio_analysis (
+  track_id,
+  status,
+  processed_at,
+  error,
+  attempts,
+  last_attempt_at
+) VALUES (?, ?, ?, ?, ?, ?)
+`
+
+type InsertTrackAudioJobParams struct {
+	TrackID       int64          `json:"track_id"`
+	Status        string         `json:"status"`
+	ProcessedAt   sql.NullString `json:"processed_at"`
+	Error         sql.NullString `json:"error"`
+	Attempts      int64          `json:"attempts"`
+	LastAttemptAt sql.NullString `json:"last_attempt_at"`
+}
+
+func (q *Queries) InsertTrackAudioJob(ctx context.Context, arg InsertTrackAudioJobParams) error {
+	_, err := q.db.ExecContext(ctx, insertTrackAudioJob,
+		arg.TrackID,
+		arg.Status,
+		arg.ProcessedAt,
+		arg.Error,
+		arg.Attempts,
+		arg.LastAttemptAt,
+	)
+	return err
+}
+
+const insertTrackEmbeddingJob = `-- name: InsertTrackEmbeddingJob :exec
+INSERT INTO track_embedding_jobs (
+  track_id,
+  status,
+  processed_at,
+  error,
+  attempts,
+  last_attempt_at
+) VALUES (?, ?, ?, ?, ?, ?)
+`
+
+type InsertTrackEmbeddingJobParams struct {
+	TrackID       int64          `json:"track_id"`
+	Status        string         `json:"status"`
+	ProcessedAt   sql.NullString `json:"processed_at"`
+	Error         sql.NullString `json:"error"`
+	Attempts      int64          `json:"attempts"`
+	LastAttemptAt sql.NullString `json:"last_attempt_at"`
+}
+
+func (q *Queries) InsertTrackEmbeddingJob(ctx context.Context, arg InsertTrackEmbeddingJobParams) error {
+	_, err := q.db.ExecContext(ctx, insertTrackEmbeddingJob,
+		arg.TrackID,
+		arg.Status,
+		arg.ProcessedAt,
+		arg.Error,
+		arg.Attempts,
+		arg.LastAttemptAt,
+	)
+	return err
+}
+
 const listTrackSyncStatus = `-- name: ListTrackSyncStatus :many
 SELECT track_id, navidrome_id, last_synced_at FROM navidrome_track_sync_status
 `

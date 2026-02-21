@@ -58,3 +58,23 @@ SELECT track_id, navidrome_id, last_synced_at FROM navidrome_track_sync_status;
 -- name: DeleteTracksByNavidromeIDs :exec
 DELETE FROM tracks
 WHERE navidrome_id IN (sqlc.slice('nav_ids'));
+
+-- name: InsertTrackAudioJob :exec
+INSERT INTO track_audio_analysis (
+  track_id,
+  status,
+  processed_at,
+  error,
+  attempts,
+  last_attempt_at
+) VALUES (?, ?, ?, ?, ?, ?);
+
+-- name: InsertTrackEmbeddingJob :exec
+INSERT INTO track_embedding_jobs (
+  track_id,
+  status,
+  processed_at,
+  error,
+  attempts,
+  last_attempt_at
+) VALUES (?, ?, ?, ?, ?, ?);
