@@ -50,15 +50,22 @@ func runSync(ctx context.Context, cmd *cobra.Command, opts *options) error {
 	}
 
 	var (
-		store         app.TrackStore
-		persistenceOn bool
+		store           app.TrackStore
+		persistenceOn   bool
+		resolvedStorePath string
 	)
 	if opts.dbPath != "" {
-		if err := ensureDir(opts.dbPath); err != nil {
+		absPath, err := filepath.Abs(opts.dbPath)
+		if err != nil {
+			return fmt.Errorf("resolve db path: %w", err)
+		}
+		resolvedStorePath = absPath
+
+		if err := ensureDir(resolvedStorePath); err != nil {
 			return err
 		}
 
-		s, err := opts.newStore(sqlite.Config{Path: opts.dbPath})
+		s, err := opts.newStore(sqlite.Config{Path: resolvedStorePath})
 		if err != nil {
 			return fmt.Errorf("init store: %w", err)
 		}
@@ -69,7 +76,7 @@ func runSync(ctx context.Context, cmd *cobra.Command, opts *options) error {
 		}
 	}
 	if persistenceOn {
-		fmt.Fprintf(out, "Track store path: %s\n", opts.dbPath)
+		fmt.Fprintf(out, "Track store path: %s\n", resolvedStorePath)
 	} else {
 		fmt.Fprintln(out, "Track store disabled (no db-path provided)")
 	}
@@ -87,6 +94,9 @@ func runSync(ctx context.Context, cmd *cobra.Command, opts *options) error {
 		return fmt.Errorf("sync tracks: %w", err)
 	}
 
+	if persistenceOn {
+		fmt.Fprintf(out, "Persisted %d tracks to %s\n", count, resolvedStorePath)
+	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Fetched %d tracks\n", count)
 	return nil
 }

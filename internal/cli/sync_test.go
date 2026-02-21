@@ -71,6 +71,7 @@ func TestRunSync(t *testing.T) {
 			"Navidrome URL: https://navidrome.local",
 			"Navidrome user: user",
 			"Track store path: " + dbPath,
+			"Persisted 2 tracks to " + dbPath,
 			"Fetched 2 tracks",
 		} {
 			if !strings.Contains(got, want) {
