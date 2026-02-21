@@ -79,17 +79,21 @@ func (s *Store) SaveTracks(ctx context.Context, tracks []app.Track) (app.SaveSta
 	}
 
 	statusMap := make(map[string]trackSyncStatus, len(statusRows))
+	existingNavIDs := make(map[string]struct{}, len(statusRows))
 	for _, row := range statusRows {
 		statusMap[row.NavidromeID] = trackSyncStatus{
 			trackID:      row.TrackID,
 			lastSyncedAt: parseTimestamp(row.LastSyncedAt),
 		}
+		existingNavIDs[row.NavidromeID] = struct{}{}
 	}
 
-	processed, updated := 0, 0
+	processed, updated, deleted := 0, 0, 0
+	remoteNavIDs := make(map[string]struct{}, len(tracks))
 
 	for _, tr := range tracks {
 		processed++
+		remoteNavIDs[tr.ID] = struct{}{}
 		status := statusMap[tr.ID]
 		remoteChanged := trackChangedAt(tr)
 
@@ -138,12 +142,28 @@ func (s *Store) SaveTracks(ctx context.Context, tracks []app.Track) (app.SaveSta
 		}
 	}
 
+	var toDelete []string
+	for navID := range existingNavIDs {
+		if _, ok := remoteNavIDs[navID]; !ok {
+			toDelete = append(toDelete, navID)
+		}
+	}
+
+	if len(toDelete) > 0 {
+		if err := queries.DeleteTracksByNavidromeIDs(ctx, toDelete); err != nil {
+			tx.Rollback()
+			return app.SaveStats{}, fmt.Errorf("delete missing tracks: %w", err)
+		}
+		deleted = len(toDelete)
+	}
+
 	completedAt := sql.NullString{String: nowUTC(), Valid: true}
 	if err := queries.CompleteSync(ctx, db.CompleteSyncParams{
 		CompletedAt:     completedAt,
 		Status:          "completed",
 		TracksProcessed: int64(processed),
 		TracksUpdated:   int64(updated),
+		TracksDeleted:   int64(deleted),
 		ID:              syncID,
 	}); err != nil {
 		tx.Rollback()
@@ -156,6 +176,7 @@ func (s *Store) SaveTracks(ctx context.Context, tracks []app.Track) (app.SaveSta
 
 	stats.Updated = updated
 	stats.Skipped = processed - updated
+	stats.Deleted = deleted
 	return stats, nil
 }
 

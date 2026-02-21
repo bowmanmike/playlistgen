@@ -8,7 +8,28 @@ package db
 import (
 	"context"
 	"database/sql"
+	"strings"
 )
+
+const deleteTracksByNavidromeIDs = `-- name: DeleteTracksByNavidromeIDs :exec
+DELETE FROM tracks
+WHERE navidrome_id IN (/*SLICE:nav_ids*/?)
+`
+
+func (q *Queries) DeleteTracksByNavidromeIDs(ctx context.Context, navIds []string) error {
+	query := deleteTracksByNavidromeIDs
+	var queryParams []interface{}
+	if len(navIds) > 0 {
+		for _, v := range navIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:nav_ids*/?", strings.Repeat(",?", len(navIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:nav_ids*/?", "NULL", 1)
+	}
+	_, err := q.db.ExecContext(ctx, query, queryParams...)
+	return err
+}
 
 const listTrackSyncStatus = `-- name: ListTrackSyncStatus :many
 SELECT track_id, navidrome_id, last_synced_at FROM navidrome_track_sync_status

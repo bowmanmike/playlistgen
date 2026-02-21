@@ -15,6 +15,7 @@ type NavidromeSync struct {
 	TracksProcessed int64          `json:"tracks_processed"`
 	TracksUpdated   int64          `json:"tracks_updated"`
 	Status          string         `json:"status"`
+	TracksDeleted   int64          `json:"tracks_deleted"`
 }
 
 type NavidromeTrackSyncStatus struct {

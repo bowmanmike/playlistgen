@@ -54,3 +54,7 @@ ON CONFLICT(track_id) DO UPDATE SET
 
 -- name: ListTrackSyncStatus :many
 SELECT track_id, navidrome_id, last_synced_at FROM navidrome_track_sync_status;
+
+-- name: DeleteTracksByNavidromeIDs :exec
+DELETE FROM tracks
+WHERE navidrome_id IN (sqlc.slice('nav_ids'));

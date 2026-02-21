@@ -5,5 +5,5 @@ RETURNING id;
 
 -- name: CompleteSync :exec
 UPDATE navidrome_syncs
-SET completed_at = ?, status = ?, tracks_processed = ?, tracks_updated = ?
+SET completed_at = ?, status = ?, tracks_processed = ?, tracks_updated = ?, tracks_deleted = ?
 WHERE id = ?;

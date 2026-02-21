@@ -12,7 +12,7 @@ import (
 
 const completeSync = `-- name: CompleteSync :exec
 UPDATE navidrome_syncs
-SET completed_at = ?, status = ?, tracks_processed = ?, tracks_updated = ?
+SET completed_at = ?, status = ?, tracks_processed = ?, tracks_updated = ?, tracks_deleted = ?
 WHERE id = ?
 `
 
@@ -21,6 +21,7 @@ type CompleteSyncParams struct {
 	Status          string         `json:"status"`
 	TracksProcessed int64          `json:"tracks_processed"`
 	TracksUpdated   int64          `json:"tracks_updated"`
+	TracksDeleted   int64          `json:"tracks_deleted"`
 	ID              int64          `json:"id"`
 }
 
@@ -30,6 +31,7 @@ func (q *Queries) CompleteSync(ctx context.Context, arg CompleteSyncParams) erro
 		arg.Status,
 		arg.TracksProcessed,
 		arg.TracksUpdated,
+		arg.TracksDeleted,
 		arg.ID,
 	)
 	return err
