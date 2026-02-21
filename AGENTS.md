@@ -6,6 +6,8 @@
 ## Build, Test, and Development Commands
 `go run ./cmd/playlistgen sync` performs a Navidrome metadata sync end-to-end. Set `NAVIDROME_URL` to the Subsonic base (e.g., `http://navidrome:4533/rest`) along with `NAVIDROME_USERNAME`/`NAVIDROME_PASSWORD` before running; use `--db-path`/`PLAYLISTGEN_DB_PATH` if you don’t want the default `data/db.sqlite`. `go build -o playlistgen ./cmd/playlistgen` produces the binary used in Docker. Execute `go test ./...` *and* `go fmt ./...` after every change and before every push; add `-run TestName` for focused work. Run `go vet ./...` to enforce static checks, and `sqlc generate` whenever query definitions change. Use `docker compose -f deploy/compose/docker-compose.yml up playlistgen` to exercise the full stack locally.
 
+All timestamps persisted in SQLite must be stored as ISO 8601/RFC3339 text strings (e.g., `time.Now().Format(time.RFC3339Nano)`) so ordering and comparisons remain consistent across migrations.
+
 ## Coding Style & Naming Conventions
 Default to `gofmt`/`goimports` (tabs, grouped imports). CLI commands and flags use kebab-case (`playlistgen generate --energy-low`). Packages stay snake-free: `internal/navidrome`, not `internal/navidrome_client`. Exported types and funcs read as domain concepts (`PlaylistGenerator`, `EmbeddingStore`). Keep files focused (<350 lines) and document complex pipelines with concise block comments describing the rule or algorithm being enforced.
 
