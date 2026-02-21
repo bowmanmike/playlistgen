@@ -14,8 +14,8 @@ type NavidromeSync struct {
 	CompletedAt     sql.NullString `json:"completed_at"`
 	TracksProcessed int64          `json:"tracks_processed"`
 	TracksUpdated   int64          `json:"tracks_updated"`
-	Status          string         `json:"status"`
 	TracksDeleted   int64          `json:"tracks_deleted"`
+	Status          string         `json:"status"`
 	CreatedAt       string         `json:"created_at"`
 }
 
