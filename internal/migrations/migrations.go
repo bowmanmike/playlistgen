@@ -2,22 +2,11 @@ package migrations
 
 import (
 	"database/sql"
-	"embed"
-	"fmt"
 
-	"github.com/pressly/goose/v3"
+	dbmigrations "github.com/bowmanmike/playlistgen/db/migrations"
 )
 
-//go:embed ../../db/migrations/*.sql
-var embedMigrations embed.FS
-
+// Run applies the SQLite migrations bundled with the binary.
 func Run(db *sql.DB) error {
-	goose.SetBaseFS(embedMigrations)
-	if err := goose.SetDialect("sqlite3"); err != nil {
-		return fmt.Errorf("set goose dialect: %w", err)
-	}
-	if err := goose.Up(db, "../../db/migrations"); err != nil {
-		return fmt.Errorf("apply migrations: %w", err)
-	}
-	return nil
+	return dbmigrations.Run(db)
 }

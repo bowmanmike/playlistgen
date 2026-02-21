@@ -5,11 +5,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
 
 	"github.com/bowmanmike/playlistgen/internal/app"
+	"github.com/bowmanmike/playlistgen/internal/db"
 	"github.com/bowmanmike/playlistgen/internal/migrations"
 )
 
@@ -61,106 +63,58 @@ func (s *Store) SaveTracks(ctx context.Context, tracks []app.Track) error {
 		return fmt.Errorf("begin tx: %w", err)
 	}
 
-	syncID, err := createSync(ctx, tx)
+	queries := db.New(tx)
+	startedAt := nowUTC()
+	syncID, err := queries.CreateSync(ctx, startedAt)
 	if err != nil {
 		tx.Rollback()
-		return err
+		return fmt.Errorf("create sync: %w", err)
 	}
-
-	trackStmt, err := tx.PrepareContext(ctx, insertTrackSQL)
-	if err != nil {
-		tx.Rollback()
-		return fmt.Errorf("prepare track stmt: %w", err)
-	}
-	defer trackStmt.Close()
-
-	statusStmt, err := tx.PrepareContext(ctx, upsertTrackSyncStatusSQL)
-	if err != nil {
-		tx.Rollback()
-		return fmt.Errorf("prepare status stmt: %w", err)
-	}
-	defer statusStmt.Close()
 
 	processed, updated := 0, 0
+	syncedAt := nowUTC()
 
 	for _, tr := range tracks {
 		processed++
-		_, err := trackStmt.ExecContext(ctx,
-			tr.ID,
-			tr.Title,
-			tr.Artist,
-			tr.ArtistID,
-			tr.Album,
-			tr.AlbumID,
-			tr.AlbumArtist,
-			nullString(tr.Genre),
-			nullInt(tr.Year),
-			nullInt(tr.TrackNumber),
-			nullInt(tr.DiscNumber),
-			int(tr.Duration/time.Second),
-			nullInt(tr.BitRate),
-			nullInt64(tr.FileSize),
-			tr.Path,
-			nullString(tr.ContentType),
-			tr.Suffix,
-			tr.CreatedAt.Format(time.RFC3339Nano),
-		)
-		if err != nil {
+		if err := queries.UpsertTrack(ctx, convertTrack(tr)); err != nil {
 			tx.Rollback()
-			return fmt.Errorf("exec insert track: %w", err)
+			return fmt.Errorf("upsert track: %w", err)
 		}
 		updated++
 
-		trackID, err := fetchTrackID(ctx, tx, tr.ID)
+		trackID, err := queries.SelectTrackID(ctx, tr.ID)
 		if err != nil {
 			tx.Rollback()
-			return err
+			return fmt.Errorf("select track id: %w", err)
 		}
 
-		if _, err := statusStmt.ExecContext(ctx, trackID, tr.ID, time.Now().Format(time.RFC3339Nano), syncID); err != nil {
+		if err := queries.UpsertTrackSyncStatus(ctx, db.UpsertTrackSyncStatusParams{
+			TrackID:      trackID,
+			NavidromeID:  tr.ID,
+			LastSyncedAt: syncedAt,
+			SyncID:       syncID,
+		}); err != nil {
 			tx.Rollback()
 			return fmt.Errorf("update track sync status: %w", err)
 		}
 	}
 
-	if err := completeSync(ctx, tx, syncID, processed, updated, "completed"); err != nil {
+	completedAt := sql.NullString{String: nowUTC(), Valid: true}
+	if err := queries.CompleteSync(ctx, db.CompleteSyncParams{
+		CompletedAt:     completedAt,
+		Status:          "completed",
+		TracksProcessed: int64(processed),
+		TracksUpdated:   int64(updated),
+		ID:              syncID,
+	}); err != nil {
 		tx.Rollback()
-		return err
+		return fmt.Errorf("complete sync: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit tx: %w", err)
 	}
 
-	return nil
-}
-
-func fetchTrackID(ctx context.Context, tx *sql.Tx, navidromeID string) (int64, error) {
-	var id int64
-	if err := tx.QueryRowContext(ctx, "SELECT id FROM tracks WHERE navidrome_id = ?", navidromeID).Scan(&id); err != nil {
-		return 0, fmt.Errorf("fetch track id: %w", err)
-	}
-	return id, nil
-}
-
-func createSync(ctx context.Context, tx *sql.Tx) (int64, error) {
-	now := time.Now().Format(time.RFC3339Nano)
-	res, err := tx.ExecContext(ctx, createSyncSQL, now)
-	if err != nil {
-		return 0, fmt.Errorf("create sync: %w", err)
-	}
-	syncID, err := res.LastInsertId()
-	if err != nil {
-		return 0, fmt.Errorf("sync last insert id: %w", err)
-	}
-	return syncID, nil
-}
-
-func completeSync(ctx context.Context, tx *sql.Tx, syncID int64, processed, updated int, status string) error {
-	now := time.Now().Format(time.RFC3339Nano)
-	if _, err := tx.ExecContext(ctx, completeSyncSQL, now, status, processed, updated, syncID); err != nil {
-		return fmt.Errorf("complete sync: %w", err)
-	}
 	return nil
 }
 
@@ -172,23 +126,57 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-func nullString(v *string) interface{} {
-	if v == nil {
-		return nil
-	}
-	return *v
+func nowUTC() string {
+	return time.Now().UTC().Format(time.RFC3339Nano)
 }
 
-func nullInt(v *int) interface{} {
-	if v == nil {
-		return nil
+func convertTrack(tr app.Track) db.UpsertTrackParams {
+	return db.UpsertTrackParams{
+		NavidromeID:     tr.ID,
+		Title:           tr.Title,
+		Artist:          tr.Artist,
+		ArtistID:        nullStringValue(tr.ArtistID),
+		Album:           tr.Album,
+		AlbumID:         nullStringValue(tr.AlbumID),
+		AlbumArtist:     nullStringValue(tr.AlbumArtist),
+		Genre:           nullStringPtr(tr.Genre),
+		Year:            nullIntPtr(tr.Year),
+		TrackNumber:     nullIntPtr(tr.TrackNumber),
+		DiscNumber:      nullIntPtr(tr.DiscNumber),
+		DurationSeconds: int64(tr.Duration / time.Second),
+		Bitrate:         nullIntPtr(tr.BitRate),
+		FileSize:        nullInt64Ptr(tr.FileSize),
+		Path:            tr.Path,
+		ContentType:     nullStringPtr(tr.ContentType),
+		Suffix:          tr.Suffix,
+		CreatedAt:       tr.CreatedAt.Format(time.RFC3339Nano),
 	}
-	return *v
 }
 
-func nullInt64(v *int64) interface{} {
-	if v == nil {
-		return nil
+func nullStringPtr(v *string) sql.NullString {
+	if v == nil || strings.TrimSpace(*v) == "" {
+		return sql.NullString{}
 	}
-	return *v
+	return sql.NullString{String: *v, Valid: true}
+}
+
+func nullStringValue(v string) sql.NullString {
+	if strings.TrimSpace(v) == "" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: v, Valid: true}
+}
+
+func nullIntPtr(v *int) sql.NullInt64 {
+	if v == nil {
+		return sql.NullInt64{}
+	}
+	return sql.NullInt64{Int64: int64(*v), Valid: true}
+}
+
+func nullInt64Ptr(v *int64) sql.NullInt64 {
+	if v == nil {
+		return sql.NullInt64{}
+	}
+	return sql.NullInt64{Int64: *v, Valid: true}
 }
