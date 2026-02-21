@@ -114,6 +114,8 @@ services:
 - [x] Sync Navidrome metadata via `/rest` API
 - [x] Persist full track metadata to SQLite (`tracks`)
 - [x] Log sync runs (`navidrome_syncs`) and per-track status (`navidrome_track_sync_status`)
+- [x] Structured logging + job queue for audio/embedding processing
+- [x] Audio processing CLI scaffolding with worker pool + job management
 - [ ] Incremental sync (process only new/changed tracks)
 - [ ] Audio analysis via ffmpeg (LUFS, peak, optional RMS)
 - [ ] Embedding generation with Ollama; vector store (sqlite-vec)
