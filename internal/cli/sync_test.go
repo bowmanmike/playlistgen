@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -65,8 +66,16 @@ func TestRunSync(t *testing.T) {
 			t.Fatalf("runSync error: %v", err)
 		}
 
-		if got := out.String(); got != "Fetched 2 tracks\n" {
-			t.Fatalf("unexpected output %q", got)
+		got := out.String()
+		for _, want := range []string{
+			"Navidrome URL: https://navidrome.local",
+			"Navidrome user: user",
+			"Track store path: " + dbPath,
+			"Fetched 2 tracks",
+		} {
+			if !strings.Contains(got, want) {
+				t.Fatalf("expected output to contain %q, actual: %q", want, got)
+			}
 		}
 		if !store.saved {
 			t.Fatalf("expected store to save tracks")

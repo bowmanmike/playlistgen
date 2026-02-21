@@ -36,6 +36,10 @@ func runSync(ctx context.Context, cmd *cobra.Command, opts *options) error {
 		return errors.New("navidrome username and password must be set via flags or environment")
 	}
 
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "Navidrome URL: %s\n", opts.navidromeURL)
+	fmt.Fprintf(out, "Navidrome user: %s\n", opts.navidromeUsername)
+
 	client, err := opts.newNavidromeClient(navidrome.Config{
 		BaseURL:  opts.navidromeURL,
 		Username: opts.navidromeUsername,
@@ -45,7 +49,10 @@ func runSync(ctx context.Context, cmd *cobra.Command, opts *options) error {
 		return fmt.Errorf("init navidrome client: %w", err)
 	}
 
-	var store app.TrackStore
+	var (
+		store         app.TrackStore
+		persistenceOn bool
+	)
 	if opts.dbPath != "" {
 		if err := ensureDir(opts.dbPath); err != nil {
 			return err
@@ -56,9 +63,15 @@ func runSync(ctx context.Context, cmd *cobra.Command, opts *options) error {
 			return fmt.Errorf("init store: %w", err)
 		}
 		store = s
+		persistenceOn = true
 		if closer, ok := s.(interface{ Close() error }); ok {
 			defer closer.Close()
 		}
+	}
+	if persistenceOn {
+		fmt.Fprintf(out, "Track store path: %s\n", opts.dbPath)
+	} else {
+		fmt.Fprintln(out, "Track store disabled (no db-path provided)")
 	}
 
 	appInstance, err := opts.newApp(app.Dependencies{
