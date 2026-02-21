@@ -23,6 +23,8 @@ func newSyncCmd(opts *options) *cobra.Command {
 		},
 	}
 
+	cmd.Flags().BoolVar(&opts.forceProcessing, "force-processing-jobs", false, "Enqueue audio and embedding jobs for every track")
+
 	return cmd
 }
 
@@ -45,6 +47,9 @@ func runSync(ctx context.Context, cmd *cobra.Command, opts *options) error {
 		"navidrome_url", opts.navidromeURL,
 		"navidrome_user", opts.navidromeUsername,
 	)
+	if opts.forceProcessing {
+		logger.Info("forcing processing jobs for all tracks")
+	}
 
 	client, err := opts.newNavidromeClient(navidrome.Config{
 		BaseURL:  opts.navidromeURL,
@@ -71,7 +76,10 @@ func runSync(ctx context.Context, cmd *cobra.Command, opts *options) error {
 			return err
 		}
 
-		s, err := opts.newStore(sqlite.Config{Path: resolvedStorePath})
+		s, err := opts.newStore(sqlite.Config{
+			Path:                resolvedStorePath,
+			ForceProcessingJobs: opts.forceProcessing,
+		})
 		if err != nil {
 			return fmt.Errorf("init store: %w", err)
 		}

@@ -53,6 +53,7 @@ type options struct {
 	logLevel           string
 	logFormat          string
 	logger             *slog.Logger
+	forceProcessing    bool
 	newNavidromeClient func(navidrome.Config) (app.NavidromePort, error)
 	newStore           func(sqlite.Config) (app.TrackStore, error)
 	newApp             func(app.Dependencies) (*app.App, error)

@@ -17,12 +17,14 @@ import (
 
 // Config drives Store construction.
 type Config struct {
-	Path string
+	Path                string
+	ForceProcessingJobs bool
 }
 
 // Store implements app.TrackStore backed by SQLite.
 type Store struct {
-	db *sql.DB
+	db                  *sql.DB
+	forceProcessingJobs bool
 }
 
 // New creates a Store and ensures schema exists.
@@ -49,7 +51,7 @@ func New(cfg Config) (*Store, error) {
 		return nil, fmt.Errorf("run migrations: %w", err)
 	}
 
-	return &Store{db: db}, nil
+	return &Store{db: db, forceProcessingJobs: cfg.ForceProcessingJobs}, nil
 }
 
 // SaveTracks inserts or replaces provided tracks and records sync metadata.
@@ -107,6 +109,12 @@ func (s *Store) SaveTracks(ctx context.Context, tracks []app.Track) (app.SaveSta
 				tx.Rollback()
 				return app.SaveStats{}, fmt.Errorf("touch track sync status: %w", err)
 			}
+			if s.forceProcessingJobs && status.trackID != 0 {
+				if err := enqueueProcessingJobs(ctx, queries, status.trackID); err != nil {
+					tx.Rollback()
+					return app.SaveStats{}, err
+				}
+			}
 			continue
 		}
 
@@ -141,7 +149,7 @@ func (s *Store) SaveTracks(ctx context.Context, tracks []app.Track) (app.SaveSta
 			lastSyncedAt: syncedAt,
 		}
 
-		if err := resetProcessingJobs(ctx, queries, trackID); err != nil {
+		if err := enqueueProcessingJobs(ctx, queries, trackID); err != nil {
 			tx.Rollback()
 			return app.SaveStats{}, err
 		}
@@ -280,7 +288,7 @@ func nullInt64Ptr(v *int64) sql.NullInt64 {
 	return sql.NullInt64{Int64: *v, Valid: true}
 }
 
-func resetProcessingJobs(ctx context.Context, queries *db.Queries, trackID int64) error {
+func enqueueProcessingJobs(ctx context.Context, queries *db.Queries, trackID int64) error {
 	status := "pending"
 	resetValue := sql.NullString{}
 	if err := queries.InsertTrackAudioJob(ctx, db.InsertTrackAudioJobParams{
@@ -291,7 +299,7 @@ func resetProcessingJobs(ctx context.Context, queries *db.Queries, trackID int64
 		Attempts:      0,
 		LastAttemptAt: resetValue,
 	}); err != nil {
-		return fmt.Errorf("reset audio job: %w", err)
+		return fmt.Errorf("enqueue audio job: %w", err)
 	}
 
 	if err := queries.InsertTrackEmbeddingJob(ctx, db.InsertTrackEmbeddingJobParams{
@@ -302,7 +310,7 @@ func resetProcessingJobs(ctx context.Context, queries *db.Queries, trackID int64
 		Attempts:      0,
 		LastAttemptAt: resetValue,
 	}); err != nil {
-		return fmt.Errorf("reset embedding job: %w", err)
+		return fmt.Errorf("enqueue embedding job: %w", err)
 	}
 	return nil
 }
