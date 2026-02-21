@@ -16,6 +16,7 @@ type NavidromeSync struct {
 	TracksUpdated   int64          `json:"tracks_updated"`
 	Status          string         `json:"status"`
 	TracksDeleted   int64          `json:"tracks_deleted"`
+	CreatedAt       string         `json:"created_at"`
 }
 
 type NavidromeTrackSyncStatus struct {
@@ -23,6 +24,7 @@ type NavidromeTrackSyncStatus struct {
 	NavidromeID  string `json:"navidrome_id"`
 	LastSyncedAt string `json:"last_synced_at"`
 	SyncID       int64  `json:"sync_id"`
+	CreatedAt    string `json:"created_at"`
 }
 
 type Track struct {
@@ -45,4 +47,26 @@ type Track struct {
 	ContentType     sql.NullString `json:"content_type"`
 	Suffix          string         `json:"suffix"`
 	CreatedAt       string         `json:"created_at"`
+}
+
+type TrackAudioAnalysis struct {
+	ID            int64          `json:"id"`
+	TrackID       int64          `json:"track_id"`
+	Status        string         `json:"status"`
+	ProcessedAt   sql.NullString `json:"processed_at"`
+	Error         sql.NullString `json:"error"`
+	Attempts      int64          `json:"attempts"`
+	LastAttemptAt sql.NullString `json:"last_attempt_at"`
+	CreatedAt     string         `json:"created_at"`
+}
+
+type TrackEmbeddingJob struct {
+	ID            int64          `json:"id"`
+	TrackID       int64          `json:"track_id"`
+	Status        string         `json:"status"`
+	ProcessedAt   sql.NullString `json:"processed_at"`
+	Error         sql.NullString `json:"error"`
+	Attempts      int64          `json:"attempts"`
+	LastAttemptAt sql.NullString `json:"last_attempt_at"`
+	CreatedAt     string         `json:"created_at"`
 }
