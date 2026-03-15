@@ -15,6 +15,9 @@ Implement real audio analysis for tracks queued by `audio-process`, using
 - The `playlistgen` container has the media library mounted read-only at
   `/library`, and Navidrome-reported track paths are expected to resolve within
   that mount.
+- The production path for audio analysis is the `playlistgen` Docker container,
+  so `ffmpeg` and `ffprobe` must be installed in that image rather than assumed
+  to exist only on a developer host.
 
 ## Design Summary
 
@@ -120,6 +123,16 @@ Add a library root configuration setting for audio analysis:
 
 The stored Navidrome `path` remains canonical metadata. The library root is
 only for resolving that relative path inside the `playlistgen` runtime.
+
+## Container Requirements
+
+The `playlistgen` image must include:
+
+- `ffmpeg`
+- `ffprobe`
+
+The implementation should update the Docker image build so `audio-process`
+works in the deployed container without extra manual package installation.
 
 ## Error Handling
 
