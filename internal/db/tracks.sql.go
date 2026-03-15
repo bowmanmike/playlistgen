@@ -11,6 +11,67 @@ import (
 	"strings"
 )
 
+const claimPendingAudioJobs = `-- name: ClaimPendingAudioJobs :many
+UPDATE track_audio_analysis
+SET status = 'processing',
+    claimed_at = ?,
+    claimed_by = ?,
+    error = NULL
+WHERE id IN (
+  SELECT id
+  FROM track_audio_analysis
+  WHERE track_audio_analysis.status = 'pending'
+     OR (
+       track_audio_analysis.status = 'processing'
+       AND track_audio_analysis.claimed_at IS NOT NULL
+       AND track_audio_analysis.claimed_at <= ?
+     )
+  ORDER BY track_audio_analysis.created_at, track_audio_analysis.id
+  LIMIT ?
+)
+RETURNING id, track_id
+`
+
+type ClaimPendingAudioJobsParams struct {
+	ClaimedAt   sql.NullString `json:"claimed_at"`
+	ClaimedBy   sql.NullString `json:"claimed_by"`
+	ClaimedAt_2 sql.NullString `json:"claimed_at_2"`
+	Limit       int64          `json:"limit"`
+}
+
+type ClaimPendingAudioJobsRow struct {
+	ID      int64 `json:"id"`
+	TrackID int64 `json:"track_id"`
+}
+
+func (q *Queries) ClaimPendingAudioJobs(ctx context.Context, arg ClaimPendingAudioJobsParams) ([]ClaimPendingAudioJobsRow, error) {
+	rows, err := q.db.QueryContext(ctx, claimPendingAudioJobs,
+		arg.ClaimedAt,
+		arg.ClaimedBy,
+		arg.ClaimedAt_2,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ClaimPendingAudioJobsRow
+	for rows.Next() {
+		var i ClaimPendingAudioJobsRow
+		if err := rows.Scan(&i.ID, &i.TrackID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const deleteTracksByNavidromeIDs = `-- name: DeleteTracksByNavidromeIDs :exec
 DELETE FROM tracks
 WHERE navidrome_id IN (/*SLICE:nav_ids*/?)
@@ -31,68 +92,207 @@ func (q *Queries) DeleteTracksByNavidromeIDs(ctx context.Context, navIds []strin
 	return err
 }
 
-const insertTrackAudioJob = `-- name: InsertTrackAudioJob :exec
+const ensureTrackAudioJob = `-- name: EnsureTrackAudioJob :exec
 INSERT INTO track_audio_analysis (
   track_id,
   status,
   processed_at,
   error,
   attempts,
-  last_attempt_at
-) VALUES (?, ?, ?, ?, ?, ?)
+  last_attempt_at,
+  claimed_at,
+  claimed_by
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(track_id) WHERE status IN ('pending', 'processing') DO UPDATE SET
+  status = CASE
+    WHEN track_audio_analysis.status = 'processing' THEN 'processing'
+    ELSE 'pending'
+  END,
+  processed_at = CASE
+    WHEN track_audio_analysis.status = 'processing' THEN track_audio_analysis.processed_at
+    ELSE excluded.processed_at
+  END,
+  error = CASE
+    WHEN track_audio_analysis.status = 'processing' THEN track_audio_analysis.error
+    ELSE excluded.error
+  END,
+  attempts = CASE
+    WHEN track_audio_analysis.status = 'processing' THEN track_audio_analysis.attempts
+    ELSE excluded.attempts
+  END,
+  last_attempt_at = CASE
+    WHEN track_audio_analysis.status = 'processing' THEN track_audio_analysis.last_attempt_at
+    ELSE excluded.last_attempt_at
+  END,
+  claimed_at = CASE
+    WHEN track_audio_analysis.status = 'processing' THEN track_audio_analysis.claimed_at
+    ELSE excluded.claimed_at
+  END,
+  claimed_by = CASE
+    WHEN track_audio_analysis.status = 'processing' THEN track_audio_analysis.claimed_by
+    ELSE excluded.claimed_by
+  END
 `
 
-type InsertTrackAudioJobParams struct {
+type EnsureTrackAudioJobParams struct {
 	TrackID       int64          `json:"track_id"`
 	Status        string         `json:"status"`
 	ProcessedAt   sql.NullString `json:"processed_at"`
 	Error         sql.NullString `json:"error"`
 	Attempts      int64          `json:"attempts"`
 	LastAttemptAt sql.NullString `json:"last_attempt_at"`
+	ClaimedAt     sql.NullString `json:"claimed_at"`
+	ClaimedBy     sql.NullString `json:"claimed_by"`
 }
 
-func (q *Queries) InsertTrackAudioJob(ctx context.Context, arg InsertTrackAudioJobParams) error {
-	_, err := q.db.ExecContext(ctx, insertTrackAudioJob,
+func (q *Queries) EnsureTrackAudioJob(ctx context.Context, arg EnsureTrackAudioJobParams) error {
+	_, err := q.db.ExecContext(ctx, ensureTrackAudioJob,
 		arg.TrackID,
 		arg.Status,
 		arg.ProcessedAt,
 		arg.Error,
 		arg.Attempts,
 		arg.LastAttemptAt,
+		arg.ClaimedAt,
+		arg.ClaimedBy,
 	)
 	return err
 }
 
-const insertTrackEmbeddingJob = `-- name: InsertTrackEmbeddingJob :exec
+const ensureTrackEmbeddingJob = `-- name: EnsureTrackEmbeddingJob :exec
 INSERT INTO track_embedding_jobs (
   track_id,
   status,
   processed_at,
   error,
   attempts,
-  last_attempt_at
-) VALUES (?, ?, ?, ?, ?, ?)
+  last_attempt_at,
+  claimed_at,
+  claimed_by
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(track_id) WHERE status IN ('pending', 'processing') DO UPDATE SET
+  status = CASE
+    WHEN track_embedding_jobs.status = 'processing' THEN 'processing'
+    ELSE 'pending'
+  END,
+  processed_at = CASE
+    WHEN track_embedding_jobs.status = 'processing' THEN track_embedding_jobs.processed_at
+    ELSE excluded.processed_at
+  END,
+  error = CASE
+    WHEN track_embedding_jobs.status = 'processing' THEN track_embedding_jobs.error
+    ELSE excluded.error
+  END,
+  attempts = CASE
+    WHEN track_embedding_jobs.status = 'processing' THEN track_embedding_jobs.attempts
+    ELSE excluded.attempts
+  END,
+  last_attempt_at = CASE
+    WHEN track_embedding_jobs.status = 'processing' THEN track_embedding_jobs.last_attempt_at
+    ELSE excluded.last_attempt_at
+  END,
+  claimed_at = CASE
+    WHEN track_embedding_jobs.status = 'processing' THEN track_embedding_jobs.claimed_at
+    ELSE excluded.claimed_at
+  END,
+  claimed_by = CASE
+    WHEN track_embedding_jobs.status = 'processing' THEN track_embedding_jobs.claimed_by
+    ELSE excluded.claimed_by
+  END
 `
 
-type InsertTrackEmbeddingJobParams struct {
+type EnsureTrackEmbeddingJobParams struct {
 	TrackID       int64          `json:"track_id"`
 	Status        string         `json:"status"`
 	ProcessedAt   sql.NullString `json:"processed_at"`
 	Error         sql.NullString `json:"error"`
 	Attempts      int64          `json:"attempts"`
 	LastAttemptAt sql.NullString `json:"last_attempt_at"`
+	ClaimedAt     sql.NullString `json:"claimed_at"`
+	ClaimedBy     sql.NullString `json:"claimed_by"`
 }
 
-func (q *Queries) InsertTrackEmbeddingJob(ctx context.Context, arg InsertTrackEmbeddingJobParams) error {
-	_, err := q.db.ExecContext(ctx, insertTrackEmbeddingJob,
+func (q *Queries) EnsureTrackEmbeddingJob(ctx context.Context, arg EnsureTrackEmbeddingJobParams) error {
+	_, err := q.db.ExecContext(ctx, ensureTrackEmbeddingJob,
 		arg.TrackID,
 		arg.Status,
 		arg.ProcessedAt,
 		arg.Error,
 		arg.Attempts,
 		arg.LastAttemptAt,
+		arg.ClaimedAt,
+		arg.ClaimedBy,
 	)
 	return err
+}
+
+const listAudioJobsByIDs = `-- name: ListAudioJobsByIDs :many
+SELECT
+  track_audio_analysis.id AS job_id,
+  tracks.id, tracks.navidrome_id, tracks.title, tracks.artist, tracks.artist_id, tracks.album, tracks.album_id, tracks.album_artist, tracks.genre, tracks.year, tracks.track_number, tracks.disc_number, tracks.duration_seconds, tracks.bitrate, tracks.file_size, tracks.path, tracks.content_type, tracks.suffix, tracks.created_at
+FROM track_audio_analysis
+JOIN tracks ON tracks.id = track_audio_analysis.track_id
+WHERE track_audio_analysis.id IN (/*SLICE:job_ids*/?)
+ORDER BY track_audio_analysis.id
+`
+
+type ListAudioJobsByIDsRow struct {
+	JobID int64 `json:"job_id"`
+	Track Track `json:"track"`
+}
+
+func (q *Queries) ListAudioJobsByIDs(ctx context.Context, jobIds []int64) ([]ListAudioJobsByIDsRow, error) {
+	query := listAudioJobsByIDs
+	var queryParams []interface{}
+	if len(jobIds) > 0 {
+		for _, v := range jobIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:job_ids*/?", strings.Repeat(",?", len(jobIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:job_ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAudioJobsByIDsRow
+	for rows.Next() {
+		var i ListAudioJobsByIDsRow
+		if err := rows.Scan(
+			&i.JobID,
+			&i.Track.ID,
+			&i.Track.NavidromeID,
+			&i.Track.Title,
+			&i.Track.Artist,
+			&i.Track.ArtistID,
+			&i.Track.Album,
+			&i.Track.AlbumID,
+			&i.Track.AlbumArtist,
+			&i.Track.Genre,
+			&i.Track.Year,
+			&i.Track.TrackNumber,
+			&i.Track.DiscNumber,
+			&i.Track.DurationSeconds,
+			&i.Track.Bitrate,
+			&i.Track.FileSize,
+			&i.Track.Path,
+			&i.Track.ContentType,
+			&i.Track.Suffix,
+			&i.Track.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listPendingAudioJobs = `-- name: ListPendingAudioJobs :many
@@ -201,7 +401,13 @@ func (q *Queries) SelectTrackID(ctx context.Context, navidromeID string) (int64,
 
 const updateAudioJobStatus = `-- name: UpdateAudioJobStatus :exec
 UPDATE track_audio_analysis
-SET status = ?, processed_at = ?, error = ?, attempts = attempts + 1, last_attempt_at = ?
+SET status = ?,
+    processed_at = ?,
+    error = ?,
+    attempts = attempts + 1,
+    last_attempt_at = ?,
+    claimed_at = ?,
+    claimed_by = ?
 WHERE id = ?
 `
 
@@ -210,6 +416,8 @@ type UpdateAudioJobStatusParams struct {
 	ProcessedAt   sql.NullString `json:"processed_at"`
 	Error         sql.NullString `json:"error"`
 	LastAttemptAt sql.NullString `json:"last_attempt_at"`
+	ClaimedAt     sql.NullString `json:"claimed_at"`
+	ClaimedBy     sql.NullString `json:"claimed_by"`
 	ID            int64          `json:"id"`
 }
 
@@ -219,6 +427,8 @@ func (q *Queries) UpdateAudioJobStatus(ctx context.Context, arg UpdateAudioJobSt
 		arg.ProcessedAt,
 		arg.Error,
 		arg.LastAttemptAt,
+		arg.ClaimedAt,
+		arg.ClaimedBy,
 		arg.ID,
 	)
 	return err

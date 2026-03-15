@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -14,10 +15,19 @@ import (
 	"github.com/bowmanmike/playlistgen/internal/storage/sqlite"
 )
 
+const audioClaimStaleAfter = 5 * time.Minute
+
 type audioProcessConfig struct {
 	batchSize   int
 	workerCount int
 	processAll  bool
+}
+
+type audioJobStore interface {
+	ClaimPendingAudioJobs(context.Context, sqlite.ClaimOptions) ([]sqlite.AudioJob, error)
+	CompleteAudioJob(context.Context, int64) error
+	FailAudioJob(context.Context, int64, error) error
+	Close() error
 }
 
 func newAudioProcessCmd(opts *options) *cobra.Command {
@@ -62,12 +72,13 @@ func runAudioProcess(ctx context.Context, cmd *cobra.Command, opts *options, cfg
 		return fmt.Errorf("resolve db path: %w", err)
 	}
 
-	store, err := sqlite.New(sqlite.Config{Path: dbPath})
+	store, err := opts.newAudioStore(sqlite.Config{Path: dbPath})
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
 	}
 	defer store.Close()
 
+	claimedBy := fmt.Sprintf("audio-process-%d", os.Getpid())
 	totalProcessed := 0
 	for {
 		select {
@@ -76,9 +87,14 @@ func runAudioProcess(ctx context.Context, cmd *cobra.Command, opts *options, cfg
 		default:
 		}
 
-		jobs, err := store.ListPendingAudioJobs(ctx, cfg.batchSize)
+		jobs, err := store.ClaimPendingAudioJobs(ctx, sqlite.ClaimOptions{
+			Limit:      cfg.batchSize,
+			ClaimedBy:  claimedBy,
+			StaleAfter: audioClaimStaleAfter,
+			Now:        time.Now().UTC(),
+		})
 		if err != nil {
-			return fmt.Errorf("list audio jobs: %w", err)
+			return fmt.Errorf("claim audio jobs: %w", err)
 		}
 		if len(jobs) == 0 {
 			if totalProcessed == 0 {
@@ -105,7 +121,7 @@ func runAudioProcess(ctx context.Context, cmd *cobra.Command, opts *options, cfg
 	return nil
 }
 
-func processAudioBatch(ctx context.Context, store *sqlite.Store, jobs []sqlite.AudioJob, workers int, logger *slog.Logger) error {
+func processAudioBatch(ctx context.Context, store audioJobStore, jobs []sqlite.AudioJob, workers int, logger *slog.Logger) error {
 	jobCh := make(chan sqlite.AudioJob)
 	errCh := make(chan error, workers)
 
@@ -148,6 +164,7 @@ func processAudioBatch(ctx context.Context, store *sqlite.Store, jobs []sqlite.A
 	}
 
 	go func() {
+		defer close(jobCh)
 		for _, job := range jobs {
 			select {
 			case <-ctx.Done():
@@ -155,7 +172,6 @@ func processAudioBatch(ctx context.Context, store *sqlite.Store, jobs []sqlite.A
 			case jobCh <- job:
 			}
 		}
-		close(jobCh)
 	}()
 
 	wg.Wait()

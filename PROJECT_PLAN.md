@@ -36,7 +36,9 @@ All services run via Docker Compose.
 
 Navidrome remains canonical. Each sync run is logged (table `navidrome_syncs`)
 and every track stores its last successful sync (`navidrome_track_sync_status`)
-so incremental syncs can skip unchanged data.
+so incremental syncs can skip unchanged data. Sync also ensures one active
+audio job and one active embedding job per track, while workers claim jobs
+atomically in SQLite before processing.
 
 ---
 
@@ -54,7 +56,7 @@ so incremental syncs can skip unchanged data.
 
 - SQLite (single-writer file DB)
 - `goose` for migrations (timestamps stored as ISO8601 TEXT)
-- `sqlc` for typed queries (planned)
+- `sqlc` for typed queries
 
 ## Vector Search
 
@@ -106,6 +108,19 @@ services:
       - DB_PATH=/data/playlist.db
       - NAVIDROME_URL=http://navidrome:4533
       - OLLAMA_URL=http://ollama:11434
+```
+
+## Current State
+
+- Navidrome metadata sync, incremental skip logic, sync history, and per-track
+  sync status are implemented.
+- Audio and embedding jobs are queued in SQLite, deduplicated per track, and
+  claimed atomically for safe concurrent runners.
+- `audio-process` currently provides queue orchestration and worker behavior;
+  ffmpeg-backed analysis is still scaffolded.
+- Embedding generation, vector search, playlist rules, and export are still to
+  be built.
+
 ---
 
 # Feature Checklist
@@ -116,11 +131,10 @@ services:
 - [x] Log sync runs (`navidrome_syncs`) and per-track status (`navidrome_track_sync_status`)
 - [x] Structured logging + job queue for audio/embedding processing
 - [x] Audio processing CLI scaffolding with worker pool + job management
-- [ ] Incremental sync (process only new/changed tracks)
+- [x] Incremental sync (skip unchanged tracks and detect deleted tracks)
 - [ ] Audio analysis via ffmpeg (LUFS, peak, optional RMS)
 - [ ] Embedding generation with Ollama; vector store (sqlite-vec)
 - [ ] Rule-based playlist engine (duration, energy shaping)
 - [ ] Semantic search / prompt-guided playlist generation
 - [ ] Playlist export to `.m3u8` (CLI command)
 - [ ] Optional HTTP/API layer (future)
-```

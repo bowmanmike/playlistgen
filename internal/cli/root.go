@@ -57,6 +57,7 @@ type options struct {
 	forceProcessing    bool
 	newNavidromeClient func(navidrome.Config) (app.NavidromePort, error)
 	newStore           func(sqlite.Config) (app.TrackStore, error)
+	newAudioStore      func(sqlite.Config) (audioJobStore, error)
 	newApp             func(app.Dependencies) (*app.App, error)
 }
 
@@ -68,6 +69,9 @@ func newOptions() *options {
 			return navidrome.NewClient(cfg)
 		},
 		newStore: func(cfg sqlite.Config) (app.TrackStore, error) {
+			return sqlite.New(cfg)
+		},
+		newAudioStore: func(cfg sqlite.Config) (audioJobStore, error) {
 			return sqlite.New(cfg)
 		},
 		newApp: func(deps app.Dependencies) (*app.App, error) {
