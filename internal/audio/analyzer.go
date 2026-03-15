@@ -63,7 +63,7 @@ func (a Analyzer) Analyze(ctx context.Context, navPath string) (AnalysisResult, 
 
 	measured, err := a.Probe.Measure(ctx, filePath)
 	if err != nil {
-		return AnalysisResult{}, err
+		return AnalysisResult{}, fmt.Errorf("analyze %s: %w", filePath, err)
 	}
 	rawTags, err := a.Tags.Read(ctx, filePath)
 	if err != nil {

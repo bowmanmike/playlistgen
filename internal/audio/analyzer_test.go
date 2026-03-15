@@ -3,6 +3,7 @@ package audio
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -115,6 +116,29 @@ func TestAnalyzerHandlesMissingReplayGainTags(t *testing.T) {
 	}
 }
 
+func TestAnalyzerIncludesResolvedPathAndProbeOutputInError(t *testing.T) {
+	analyzer := Analyzer{
+		Root: "/library",
+		Probe: probeStub{
+			err: errors.New("ffprobe duration: /library/albums/song.flac: No such file or directory"),
+		},
+		Tags: replayGainStub{},
+	}
+
+	_, err := analyzer.Analyze(context.Background(), "/albums/song.flac")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if got := err.Error(); got == "" ||
+		!containsAll(got,
+			"analyze /library/albums/song.flac",
+			"ffprobe duration",
+			"No such file or directory",
+		) {
+		t.Fatalf("unexpected error %q", got)
+	}
+}
+
 type probeStub struct {
 	measured MeasuredAudio
 	err      error
@@ -131,4 +155,13 @@ type replayGainStub struct {
 
 func (r replayGainStub) Read(context.Context, string) (RawReplayGain, error) {
 	return r.raw, r.err
+}
+
+func containsAll(s string, parts ...string) bool {
+	for _, part := range parts {
+		if !strings.Contains(s, part) {
+			return false
+		}
+	}
+	return true
 }

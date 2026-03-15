@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 )
 
 type FFmpegProbeRunner struct {
@@ -25,7 +26,7 @@ func (r FFmpegProbeRunner) Measure(ctx context.Context, path string) (MeasuredAu
 		path,
 	)
 	if err != nil {
-		return MeasuredAudio{}, fmt.Errorf("ffprobe duration: %w", err)
+		return MeasuredAudio{}, commandError("ffprobe duration", err, durationOut)
 	}
 	var durationPayload struct {
 		Format struct {
@@ -47,7 +48,7 @@ func (r FFmpegProbeRunner) Measure(ctx context.Context, path string) (MeasuredAu
 		"-",
 	)
 	if err != nil {
-		return MeasuredAudio{}, fmt.Errorf("ffmpeg loudness scan: %w", err)
+		return MeasuredAudio{}, commandError("ffmpeg loudness scan", err, loudnessOut)
 	}
 
 	measuredLoudness, measuredPeak, err := parseLoudnormOutput(loudnessOut)
@@ -85,4 +86,12 @@ func parseLoudnormOutput(out []byte) (*float64, *float64, error) {
 		return nil, nil, fmt.Errorf("parse true peak: %w", err)
 	}
 	return &lufs, &peak, nil
+}
+
+func commandError(prefix string, err error, output []byte) error {
+	trimmed := strings.TrimSpace(string(output))
+	if trimmed == "" {
+		return fmt.Errorf("%s: %w", prefix, err)
+	}
+	return fmt.Errorf("%s: %s: %w", prefix, trimmed, err)
 }
