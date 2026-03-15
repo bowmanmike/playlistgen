@@ -6,6 +6,7 @@ bin/
 *.out
 
 # Tooling caches
+.worktrees/
 .gocache/
 .gomodcache/
 .gopath/
