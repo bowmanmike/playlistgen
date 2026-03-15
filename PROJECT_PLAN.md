@@ -116,8 +116,11 @@ services:
   sync status are implemented.
 - Audio and embedding jobs are queued in SQLite, deduplicated per track, and
   claimed atomically for safe concurrent runners.
-- `audio-process` currently provides queue orchestration and worker behavior;
-  ffmpeg-backed analysis is still scaffolded.
+- `audio-process` now resolves library files from `/library` by default, runs
+  ffprobe/ffmpeg-based analysis, stores durable audio features, and records
+  run-level status in SQLite.
+- ReplayGain tag values are stored alongside measured audio values, with
+  ReplayGain taking precedence for effective gain/peak fields.
 - Embedding generation, vector search, playlist rules, and export are still to
   be built.
 
@@ -132,7 +135,7 @@ services:
 - [x] Structured logging + job queue for audio/embedding processing
 - [x] Audio processing CLI scaffolding with worker pool + job management
 - [x] Incremental sync (skip unchanged tracks and detect deleted tracks)
-- [ ] Audio analysis via ffmpeg (LUFS, peak, optional RMS)
+- [x] Audio analysis via ffmpeg/ffprobe with ReplayGain-backed effective values
 - [ ] Embedding generation with Ollama; vector store (sqlite-vec)
 - [ ] Rule-based playlist engine (duration, energy shaping)
 - [ ] Semantic search / prompt-guided playlist generation

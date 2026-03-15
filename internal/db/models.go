@@ -8,6 +8,16 @@ import (
 	"database/sql"
 )
 
+type AudioProcessingRun struct {
+	ID            int64          `json:"id"`
+	StartedAt     string         `json:"started_at"`
+	CompletedAt   sql.NullString `json:"completed_at"`
+	Status        string         `json:"status"`
+	JobsClaimed   int64          `json:"jobs_claimed"`
+	JobsCompleted int64          `json:"jobs_completed"`
+	JobsFailed    int64          `json:"jobs_failed"`
+}
+
 type NavidromeSync struct {
 	ID              int64          `json:"id"`
 	StartedAt       string         `json:"started_at"`
@@ -60,6 +70,22 @@ type TrackAudioAnalysis struct {
 	CreatedAt     string         `json:"created_at"`
 	ClaimedAt     sql.NullString `json:"claimed_at"`
 	ClaimedBy     sql.NullString `json:"claimed_by"`
+}
+
+type TrackAudioFeature struct {
+	TrackID                int64           `json:"track_id"`
+	AnalyzedAt             string          `json:"analyzed_at"`
+	FileDurationSeconds    float64         `json:"file_duration_seconds"`
+	MeasuredIntegratedLufs sql.NullFloat64 `json:"measured_integrated_lufs"`
+	MeasuredTruePeak       sql.NullFloat64 `json:"measured_true_peak"`
+	ReplaygainTrackGainDb  sql.NullFloat64 `json:"replaygain_track_gain_db"`
+	ReplaygainTrackPeak    sql.NullFloat64 `json:"replaygain_track_peak"`
+	ReplaygainAlbumGainDb  sql.NullFloat64 `json:"replaygain_album_gain_db"`
+	ReplaygainAlbumPeak    sql.NullFloat64 `json:"replaygain_album_peak"`
+	EffectiveGainDb        sql.NullFloat64 `json:"effective_gain_db"`
+	EffectivePeak          sql.NullFloat64 `json:"effective_peak"`
+	EffectiveGainSource    string          `json:"effective_gain_source"`
+	EffectivePeakSource    string          `json:"effective_peak_source"`
 }
 
 type TrackEmbeddingJob struct {

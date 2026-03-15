@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/bowmanmike/playlistgen/internal/audio"
 	"github.com/bowmanmike/playlistgen/internal/storage/sqlite"
 )
 
@@ -25,9 +26,16 @@ type audioProcessConfig struct {
 
 type audioJobStore interface {
 	ClaimPendingAudioJobs(context.Context, sqlite.ClaimOptions) ([]sqlite.AudioJob, error)
+	StartAudioProcessingRun(context.Context, time.Time) (int64, error)
+	CompleteAudioProcessingRun(context.Context, int64, sqlite.AudioProcessingRunSummary) error
+	UpsertTrackAudioFeatures(context.Context, sqlite.AudioFeatureRecord) error
 	CompleteAudioJob(context.Context, int64) error
 	FailAudioJob(context.Context, int64, error) error
 	Close() error
+}
+
+type audioAnalyzer interface {
+	Analyze(context.Context, string) (audio.AnalysisResult, error)
 }
 
 func newAudioProcessCmd(opts *options) *cobra.Command {
@@ -66,6 +74,9 @@ func runAudioProcess(ctx context.Context, cmd *cobra.Command, opts *options, cfg
 	if cfg.workerCount <= 0 {
 		return errors.New("workers must be greater than zero")
 	}
+	if opts.libraryRoot == "" {
+		opts.libraryRoot = defaultLibraryRoot
+	}
 
 	dbPath, err := filepath.Abs(opts.dbPath)
 	if err != nil {
@@ -78,11 +89,22 @@ func runAudioProcess(ctx context.Context, cmd *cobra.Command, opts *options, cfg
 	}
 	defer store.Close()
 
+	runStartedAt := time.Now().UTC()
+	runID, err := store.StartAudioProcessingRun(ctx, runStartedAt)
+	if err != nil {
+		return fmt.Errorf("start audio processing run: %w", err)
+	}
+
+	analyzer := opts.newAudioAnalyzer(opts.libraryRoot)
 	claimedBy := fmt.Sprintf("audio-process-%d", os.Getpid())
+	summary := sqlite.AudioProcessingRunSummary{Status: "completed"}
 	totalProcessed := 0
 	for {
 		select {
 		case <-ctx.Done():
+			summary.Status = "canceled"
+			summary.CompletedAt = time.Now().UTC()
+			_ = store.CompleteAudioProcessingRun(ctx, runID, summary)
 			return ctx.Err()
 		default:
 		}
@@ -94,6 +116,9 @@ func runAudioProcess(ctx context.Context, cmd *cobra.Command, opts *options, cfg
 			Now:        time.Now().UTC(),
 		})
 		if err != nil {
+			summary.Status = "failed"
+			summary.CompletedAt = time.Now().UTC()
+			_ = store.CompleteAudioProcessingRun(ctx, runID, summary)
 			return fmt.Errorf("claim audio jobs: %w", err)
 		}
 		if len(jobs) == 0 {
@@ -102,12 +127,19 @@ func runAudioProcess(ctx context.Context, cmd *cobra.Command, opts *options, cfg
 			}
 			break
 		}
+		summary.JobsClaimed += len(jobs)
 
 		logger.Info("processing audio batch",
 			"jobs", len(jobs),
 			"workers", cfg.workerCount,
 		)
-		if err := processAudioBatch(ctx, store, jobs, cfg.workerCount, logger); err != nil {
+		batchSummary, err := processAudioBatch(ctx, store, analyzer, jobs, cfg.workerCount, logger)
+		summary.JobsCompleted += batchSummary.completed
+		summary.JobsFailed += batchSummary.failed
+		if err != nil {
+			summary.Status = "failed"
+			summary.CompletedAt = time.Now().UTC()
+			_ = store.CompleteAudioProcessingRun(ctx, runID, summary)
 			return err
 		}
 		totalProcessed += len(jobs)
@@ -117,13 +149,23 @@ func runAudioProcess(ctx context.Context, cmd *cobra.Command, opts *options, cfg
 		}
 	}
 
+	summary.CompletedAt = time.Now().UTC()
+	if err := store.CompleteAudioProcessingRun(ctx, runID, summary); err != nil {
+		return fmt.Errorf("complete audio processing run: %w", err)
+	}
 	logger.Info("audio processing complete", "processed_jobs", totalProcessed)
 	return nil
 }
 
-func processAudioBatch(ctx context.Context, store audioJobStore, jobs []sqlite.AudioJob, workers int, logger *slog.Logger) error {
+type audioBatchSummary struct {
+	completed int
+	failed    int
+}
+
+func processAudioBatch(ctx context.Context, store audioJobStore, analyzer audioAnalyzer, jobs []sqlite.AudioJob, workers int, logger *slog.Logger) (audioBatchSummary, error) {
 	jobCh := make(chan sqlite.AudioJob)
-	errCh := make(chan error, workers)
+	errCh := make(chan error, len(jobs)+workers)
+	resultCh := make(chan audioBatchSummary, len(jobs))
 
 	var wg sync.WaitGroup
 	for i := 0; i < workers; i++ {
@@ -146,19 +188,44 @@ func processAudioBatch(ctx context.Context, store audioJobStore, jobs []sqlite.A
 					"path", job.Track.Path,
 				)
 
-				if err := simulateAudioWork(ctx); err != nil {
+				result, err := analyzer.Analyze(ctx, job.Track.Path)
+				if err != nil {
 					workerLogger.Error("audio job failed", "job_id", job.ID, "error", err)
 					_ = store.FailAudioJob(ctx, job.ID, err)
 					errCh <- err
+					resultCh <- audioBatchSummary{failed: 1}
+					continue
+				}
+
+				if err := store.UpsertTrackAudioFeatures(ctx, sqlite.AudioFeatureRecord{
+					TrackID:                job.TrackID,
+					AnalyzedAt:             result.AnalyzedAt,
+					FileDurationSeconds:    result.Measured.FileDurationSeconds,
+					MeasuredIntegratedLUFS: result.Measured.IntegratedLUFS,
+					MeasuredTruePeak:       result.Measured.TruePeak,
+					ReplayGainTrackGainDB:  result.ReplayGain.TrackGainDB,
+					ReplayGainTrackPeak:    result.ReplayGain.TrackPeak,
+					ReplayGainAlbumGainDB:  result.ReplayGain.AlbumGainDB,
+					ReplayGainAlbumPeak:    result.ReplayGain.AlbumPeak,
+					EffectiveGainDB:        result.Effective.GainDB,
+					EffectivePeak:          result.Effective.Peak,
+					EffectiveGainSource:    result.Effective.GainSource,
+					EffectivePeakSource:    result.Effective.PeakSource,
+				}); err != nil {
+					_ = store.FailAudioJob(ctx, job.ID, err)
+					errCh <- fmt.Errorf("persist audio features for job %d: %w", job.ID, err)
+					resultCh <- audioBatchSummary{failed: 1}
 					continue
 				}
 
 				if err := store.CompleteAudioJob(ctx, job.ID); err != nil {
 					errCh <- fmt.Errorf("complete audio job %d: %w", job.ID, err)
+					resultCh <- audioBatchSummary{failed: 1}
 					continue
 				}
 
 				workerLogger.Info("audio job completed", "job_id", job.ID)
+				resultCh <- audioBatchSummary{completed: 1}
 			}
 		}(i + 1)
 	}
@@ -176,24 +243,18 @@ func processAudioBatch(ctx context.Context, store audioJobStore, jobs []sqlite.A
 
 	wg.Wait()
 	close(errCh)
+	close(resultCh)
 
+	summary := audioBatchSummary{}
+	for result := range resultCh {
+		summary.completed += result.completed
+		summary.failed += result.failed
+	}
 	for err := range errCh {
 		if err != nil && !errors.Is(err, context.Canceled) {
-			return err
+			return summary, err
 		}
 	}
 
-	return ctx.Err()
-}
-
-func simulateAudioWork(ctx context.Context) error {
-	timer := time.NewTimer(100 * time.Millisecond)
-	defer timer.Stop()
-
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
+	return summary, ctx.Err()
 }

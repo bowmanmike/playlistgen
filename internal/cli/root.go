@@ -8,12 +8,14 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/bowmanmike/playlistgen/internal/app"
+	"github.com/bowmanmike/playlistgen/internal/audio"
 	"github.com/bowmanmike/playlistgen/internal/logging"
 	"github.com/bowmanmike/playlistgen/internal/navidrome"
 	"github.com/bowmanmike/playlistgen/internal/storage/sqlite"
 )
 
 const defaultDBPath = "data/db.sqlite"
+const defaultLibraryRoot = "/library"
 
 // Execute runs the root CLI command.
 func Execute() error {
@@ -37,6 +39,7 @@ func newRootCmd(opts *options) *cobra.Command {
 	cmd.PersistentFlags().StringVar(&opts.navidromeUsername, "navidrome-username", "", "Navidrome username (or NAVIDROME_USERNAME/NAVIDROME_USER)")
 	cmd.PersistentFlags().StringVar(&opts.navidromePassword, "navidrome-password", "", "Navidrome password (or NAVIDROME_PASSWORD)")
 	cmd.PersistentFlags().StringVar(&opts.dbPath, "db-path", getEnv("PLAYLISTGEN_DB_PATH", defaultDBPath), "SQLite database path (or PLAYLISTGEN_DB_PATH)")
+	cmd.PersistentFlags().StringVar(&opts.libraryRoot, "library-root", getEnv("PLAYLISTGEN_LIBRARY_ROOT", defaultLibraryRoot), "Mounted library root (or PLAYLISTGEN_LIBRARY_ROOT)")
 	cmd.PersistentFlags().StringVar(&opts.logLevel, "log-level", "info", "Log level (debug, info, warn, error)")
 	cmd.PersistentFlags().StringVar(&opts.logFormat, "log-format", "json", "Log format (json, text)")
 
@@ -51,6 +54,7 @@ type options struct {
 	navidromeUsername  string
 	navidromePassword  string
 	dbPath             string
+	libraryRoot        string
 	logLevel           string
 	logFormat          string
 	logger             *slog.Logger
@@ -58,6 +62,7 @@ type options struct {
 	newNavidromeClient func(navidrome.Config) (app.NavidromePort, error)
 	newStore           func(sqlite.Config) (app.TrackStore, error)
 	newAudioStore      func(sqlite.Config) (audioJobStore, error)
+	newAudioAnalyzer   func(root string) audioAnalyzer
 	newApp             func(app.Dependencies) (*app.App, error)
 }
 
@@ -73,6 +78,13 @@ func newOptions() *options {
 		},
 		newAudioStore: func(cfg sqlite.Config) (audioJobStore, error) {
 			return sqlite.New(cfg)
+		},
+		newAudioAnalyzer: func(root string) audioAnalyzer {
+			return audio.Analyzer{
+				Root:  root,
+				Probe: audio.FFmpegProbeRunner{},
+				Tags:  audio.FFProbeReplayGainReader{},
+			}
 		},
 		newApp: func(deps app.Dependencies) (*app.App, error) {
 			return app.New(deps)

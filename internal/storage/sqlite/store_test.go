@@ -694,3 +694,118 @@ func seedClaimedAudioJob(t *testing.T, store *Store, dbPath, navidromeID string)
 	}
 	return jobs[0].ID
 }
+
+func TestUpsertTrackAudioFeaturesPersistsMeasuredAndReplayGainValues(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "audio-features.db")
+	store, err := New(Config{Path: dbPath})
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	track := app.Track{
+		ID:        "feature-track",
+		Title:     "Feature Track",
+		Artist:    "Artist",
+		Album:     "Album",
+		CreatedAt: time.Unix(8000, 0),
+		Duration:  123 * time.Second,
+		Path:      "/music/feature.flac",
+		Suffix:    "flac",
+	}
+	if _, err := store.SaveTracks(context.Background(), []app.Track{track}); err != nil {
+		t.Fatalf("save track: %v", err)
+	}
+
+	raw, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	defer raw.Close()
+
+	var trackID int64
+	if err := raw.QueryRow("SELECT id FROM tracks WHERE navidrome_id = ?", track.ID).Scan(&trackID); err != nil {
+		t.Fatalf("select track id: %v", err)
+	}
+
+	measuredLoudness := -11.2
+	measuredPeak := 0.92
+	replayGainTrack := -7.15
+	replayGainTrackPeak := 0.88
+	replayGainAlbum := -6.01
+	replayGainAlbumPeak := 0.9
+	effectiveGain := replayGainAlbum
+	effectivePeak := replayGainAlbumPeak
+	if err := store.UpsertTrackAudioFeatures(context.Background(), AudioFeatureRecord{
+		TrackID:                trackID,
+		AnalyzedAt:             time.Now().UTC(),
+		FileDurationSeconds:    123.45,
+		MeasuredIntegratedLUFS: &measuredLoudness,
+		MeasuredTruePeak:       &measuredPeak,
+		ReplayGainTrackGainDB:  &replayGainTrack,
+		ReplayGainTrackPeak:    &replayGainTrackPeak,
+		ReplayGainAlbumGainDB:  &replayGainAlbum,
+		ReplayGainAlbumPeak:    &replayGainAlbumPeak,
+		EffectiveGainDB:        &effectiveGain,
+		EffectivePeak:          &effectivePeak,
+		EffectiveGainSource:    "replaygain_album",
+		EffectivePeakSource:    "replaygain_album",
+	}); err != nil {
+		t.Fatalf("upsert audio features: %v", err)
+	}
+
+	var count int
+	if err := raw.QueryRow("SELECT COUNT(*) FROM track_audio_features WHERE track_id = ?", trackID).Scan(&count); err != nil {
+		t.Fatalf("count feature rows: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected 1 feature row, got %d", count)
+	}
+}
+
+func TestAudioProcessingRunLifecycle(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "audio-runs.db")
+	store, err := New(Config{Path: dbPath})
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	startedAt := time.Now().UTC()
+	runID, err := store.StartAudioProcessingRun(context.Background(), startedAt)
+	if err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+
+	completedAt := startedAt.Add(2 * time.Minute)
+	if err := store.CompleteAudioProcessingRun(context.Background(), runID, AudioProcessingRunSummary{
+		CompletedAt:   completedAt,
+		Status:        "completed",
+		JobsClaimed:   5,
+		JobsCompleted: 4,
+		JobsFailed:    1,
+	}); err != nil {
+		t.Fatalf("complete run: %v", err)
+	}
+
+	raw, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	defer raw.Close()
+
+	var status string
+	var jobsClaimed int
+	var jobsCompleted int
+	var jobsFailed int
+	if err := raw.QueryRow(`
+		SELECT status, jobs_claimed, jobs_completed, jobs_failed
+		FROM audio_processing_runs
+		WHERE id = ?
+	`, runID).Scan(&status, &jobsClaimed, &jobsCompleted, &jobsFailed); err != nil {
+		t.Fatalf("query run row: %v", err)
+	}
+	if status != "completed" || jobsClaimed != 5 || jobsCompleted != 4 || jobsFailed != 1 {
+		t.Fatalf("unexpected run row status=%s claimed=%d completed=%d failed=%d", status, jobsClaimed, jobsCompleted, jobsFailed)
+	}
+}

@@ -59,6 +59,46 @@ SELECT track_id, navidrome_id, last_synced_at FROM navidrome_track_sync_status;
 DELETE FROM tracks
 WHERE navidrome_id IN (sqlc.slice('nav_ids'));
 
+-- name: UpsertTrackAudioFeatures :exec
+INSERT INTO track_audio_features (
+  track_id,
+  analyzed_at,
+  file_duration_seconds,
+  measured_integrated_lufs,
+  measured_true_peak,
+  replaygain_track_gain_db,
+  replaygain_track_peak,
+  replaygain_album_gain_db,
+  replaygain_album_peak,
+  effective_gain_db,
+  effective_peak,
+  effective_gain_source,
+  effective_peak_source
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(track_id) DO UPDATE SET
+  analyzed_at = excluded.analyzed_at,
+  file_duration_seconds = excluded.file_duration_seconds,
+  measured_integrated_lufs = excluded.measured_integrated_lufs,
+  measured_true_peak = excluded.measured_true_peak,
+  replaygain_track_gain_db = excluded.replaygain_track_gain_db,
+  replaygain_track_peak = excluded.replaygain_track_peak,
+  replaygain_album_gain_db = excluded.replaygain_album_gain_db,
+  replaygain_album_peak = excluded.replaygain_album_peak,
+  effective_gain_db = excluded.effective_gain_db,
+  effective_peak = excluded.effective_peak,
+  effective_gain_source = excluded.effective_gain_source,
+  effective_peak_source = excluded.effective_peak_source;
+
+-- name: CreateAudioProcessingRun :one
+INSERT INTO audio_processing_runs (started_at, status)
+VALUES (?, 'in_progress')
+RETURNING id;
+
+-- name: CompleteAudioProcessingRun :exec
+UPDATE audio_processing_runs
+SET completed_at = ?, status = ?, jobs_claimed = ?, jobs_completed = ?, jobs_failed = ?
+WHERE id = ?;
+
 -- name: EnsureTrackAudioJob :exec
 INSERT INTO track_audio_analysis (
   track_id,

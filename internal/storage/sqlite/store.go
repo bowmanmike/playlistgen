@@ -61,8 +61,9 @@ func New(cfg Config) (*Store, error) {
 
 // AudioJob represents a pending audio analysis task and its associated track.
 type AudioJob struct {
-	ID    int64
-	Track app.Track
+	ID      int64
+	TrackID int64
+	Track   app.Track
 }
 
 // ClaimOptions controls how audio jobs are claimed for processing.
@@ -71,6 +72,32 @@ type ClaimOptions struct {
 	ClaimedBy  string
 	StaleAfter time.Duration
 	Now        time.Time
+}
+
+// AudioFeatureRecord stores durable audio feature data for a track.
+type AudioFeatureRecord struct {
+	TrackID                int64
+	AnalyzedAt             time.Time
+	FileDurationSeconds    float64
+	MeasuredIntegratedLUFS *float64
+	MeasuredTruePeak       *float64
+	ReplayGainTrackGainDB  *float64
+	ReplayGainTrackPeak    *float64
+	ReplayGainAlbumGainDB  *float64
+	ReplayGainAlbumPeak    *float64
+	EffectiveGainDB        *float64
+	EffectivePeak          *float64
+	EffectiveGainSource    string
+	EffectivePeakSource    string
+}
+
+// AudioProcessingRunSummary captures final counters for one audio-process run.
+type AudioProcessingRunSummary struct {
+	CompletedAt   time.Time
+	Status        string
+	JobsClaimed   int
+	JobsCompleted int
+	JobsFailed    int
 }
 
 // SaveTracks inserts or replaces provided tracks and records sync metadata.
@@ -256,6 +283,54 @@ func nowUTC() string {
 	return time.Now().UTC().Format(time.RFC3339Nano)
 }
 
+// UpsertTrackAudioFeatures writes the latest durable audio feature snapshot for a track.
+func (s *Store) UpsertTrackAudioFeatures(ctx context.Context, record AudioFeatureRecord) error {
+	params := db.UpsertTrackAudioFeaturesParams{
+		TrackID:                record.TrackID,
+		AnalyzedAt:             formatTimestamp(record.AnalyzedAt.UTC()),
+		FileDurationSeconds:    record.FileDurationSeconds,
+		MeasuredIntegratedLufs: nullFloat64Ptr(record.MeasuredIntegratedLUFS),
+		MeasuredTruePeak:       nullFloat64Ptr(record.MeasuredTruePeak),
+		ReplaygainTrackGainDb:  nullFloat64Ptr(record.ReplayGainTrackGainDB),
+		ReplaygainTrackPeak:    nullFloat64Ptr(record.ReplayGainTrackPeak),
+		ReplaygainAlbumGainDb:  nullFloat64Ptr(record.ReplayGainAlbumGainDB),
+		ReplaygainAlbumPeak:    nullFloat64Ptr(record.ReplayGainAlbumPeak),
+		EffectiveGainDb:        nullFloat64Ptr(record.EffectiveGainDB),
+		EffectivePeak:          nullFloat64Ptr(record.EffectivePeak),
+		EffectiveGainSource:    record.EffectiveGainSource,
+		EffectivePeakSource:    record.EffectivePeakSource,
+	}
+	if err := db.New(s.db).UpsertTrackAudioFeatures(ctx, params); err != nil {
+		return fmt.Errorf("upsert track audio features: %w", err)
+	}
+	return nil
+}
+
+// StartAudioProcessingRun records the start of one audio-process invocation.
+func (s *Store) StartAudioProcessingRun(ctx context.Context, startedAt time.Time) (int64, error) {
+	runID, err := db.New(s.db).CreateAudioProcessingRun(ctx, formatTimestamp(startedAt.UTC()))
+	if err != nil {
+		return 0, fmt.Errorf("create audio processing run: %w", err)
+	}
+	return runID, nil
+}
+
+// CompleteAudioProcessingRun records the final status and counters for one run.
+func (s *Store) CompleteAudioProcessingRun(ctx context.Context, runID int64, summary AudioProcessingRunSummary) error {
+	params := db.CompleteAudioProcessingRunParams{
+		CompletedAt:   sql.NullString{String: formatTimestamp(summary.CompletedAt.UTC()), Valid: !summary.CompletedAt.IsZero()},
+		Status:        summary.Status,
+		JobsClaimed:   int64(summary.JobsClaimed),
+		JobsCompleted: int64(summary.JobsCompleted),
+		JobsFailed:    int64(summary.JobsFailed),
+		ID:            runID,
+	}
+	if err := db.New(s.db).CompleteAudioProcessingRun(ctx, params); err != nil {
+		return fmt.Errorf("complete audio processing run: %w", err)
+	}
+	return nil
+}
+
 func convertTrack(tr app.Track) db.UpsertTrackParams {
 	return db.UpsertTrackParams{
 		NavidromeID:     tr.ID,
@@ -328,6 +403,13 @@ func nullInt64Ptr(v *int64) sql.NullInt64 {
 		return sql.NullInt64{}
 	}
 	return sql.NullInt64{Int64: *v, Valid: true}
+}
+
+func nullFloat64Ptr(v *float64) sql.NullFloat64 {
+	if v == nil {
+		return sql.NullFloat64{}
+	}
+	return sql.NullFloat64{Float64: *v, Valid: true}
 }
 
 func stringValue(ns sql.NullString) string {
@@ -440,8 +522,9 @@ func (s *Store) ClaimPendingAudioJobs(ctx context.Context, opts ClaimOptions) ([
 	jobs := make([]AudioJob, 0, len(rows))
 	for _, row := range rows {
 		jobs = append(jobs, AudioJob{
-			ID:    row.JobID,
-			Track: convertDBTrack(row.Track),
+			ID:      row.JobID,
+			TrackID: row.Track.ID,
+			Track:   convertDBTrack(row.Track),
 		})
 	}
 	return jobs, nil
@@ -459,8 +542,9 @@ func (s *Store) ListPendingAudioJobs(ctx context.Context, limit int) ([]AudioJob
 	jobs := make([]AudioJob, 0, len(rows))
 	for _, row := range rows {
 		jobs = append(jobs, AudioJob{
-			ID:    row.JobID,
-			Track: convertDBTrack(row.Track),
+			ID:      row.JobID,
+			TrackID: row.Track.ID,
+			Track:   convertDBTrack(row.Track),
 		})
 	}
 	return jobs, nil

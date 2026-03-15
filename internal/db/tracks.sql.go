@@ -72,6 +72,46 @@ func (q *Queries) ClaimPendingAudioJobs(ctx context.Context, arg ClaimPendingAud
 	return items, nil
 }
 
+const completeAudioProcessingRun = `-- name: CompleteAudioProcessingRun :exec
+UPDATE audio_processing_runs
+SET completed_at = ?, status = ?, jobs_claimed = ?, jobs_completed = ?, jobs_failed = ?
+WHERE id = ?
+`
+
+type CompleteAudioProcessingRunParams struct {
+	CompletedAt   sql.NullString `json:"completed_at"`
+	Status        string         `json:"status"`
+	JobsClaimed   int64          `json:"jobs_claimed"`
+	JobsCompleted int64          `json:"jobs_completed"`
+	JobsFailed    int64          `json:"jobs_failed"`
+	ID            int64          `json:"id"`
+}
+
+func (q *Queries) CompleteAudioProcessingRun(ctx context.Context, arg CompleteAudioProcessingRunParams) error {
+	_, err := q.db.ExecContext(ctx, completeAudioProcessingRun,
+		arg.CompletedAt,
+		arg.Status,
+		arg.JobsClaimed,
+		arg.JobsCompleted,
+		arg.JobsFailed,
+		arg.ID,
+	)
+	return err
+}
+
+const createAudioProcessingRun = `-- name: CreateAudioProcessingRun :one
+INSERT INTO audio_processing_runs (started_at, status)
+VALUES (?, 'in_progress')
+RETURNING id
+`
+
+func (q *Queries) CreateAudioProcessingRun(ctx context.Context, startedAt string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, createAudioProcessingRun, startedAt)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
 const deleteTracksByNavidromeIDs = `-- name: DeleteTracksByNavidromeIDs :exec
 DELETE FROM tracks
 WHERE navidrome_id IN (/*SLICE:nav_ids*/?)
@@ -516,6 +556,72 @@ func (q *Queries) UpsertTrack(ctx context.Context, arg UpsertTrackParams) error 
 		arg.ContentType,
 		arg.Suffix,
 		arg.CreatedAt,
+	)
+	return err
+}
+
+const upsertTrackAudioFeatures = `-- name: UpsertTrackAudioFeatures :exec
+INSERT INTO track_audio_features (
+  track_id,
+  analyzed_at,
+  file_duration_seconds,
+  measured_integrated_lufs,
+  measured_true_peak,
+  replaygain_track_gain_db,
+  replaygain_track_peak,
+  replaygain_album_gain_db,
+  replaygain_album_peak,
+  effective_gain_db,
+  effective_peak,
+  effective_gain_source,
+  effective_peak_source
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(track_id) DO UPDATE SET
+  analyzed_at = excluded.analyzed_at,
+  file_duration_seconds = excluded.file_duration_seconds,
+  measured_integrated_lufs = excluded.measured_integrated_lufs,
+  measured_true_peak = excluded.measured_true_peak,
+  replaygain_track_gain_db = excluded.replaygain_track_gain_db,
+  replaygain_track_peak = excluded.replaygain_track_peak,
+  replaygain_album_gain_db = excluded.replaygain_album_gain_db,
+  replaygain_album_peak = excluded.replaygain_album_peak,
+  effective_gain_db = excluded.effective_gain_db,
+  effective_peak = excluded.effective_peak,
+  effective_gain_source = excluded.effective_gain_source,
+  effective_peak_source = excluded.effective_peak_source
+`
+
+type UpsertTrackAudioFeaturesParams struct {
+	TrackID                int64           `json:"track_id"`
+	AnalyzedAt             string          `json:"analyzed_at"`
+	FileDurationSeconds    float64         `json:"file_duration_seconds"`
+	MeasuredIntegratedLufs sql.NullFloat64 `json:"measured_integrated_lufs"`
+	MeasuredTruePeak       sql.NullFloat64 `json:"measured_true_peak"`
+	ReplaygainTrackGainDb  sql.NullFloat64 `json:"replaygain_track_gain_db"`
+	ReplaygainTrackPeak    sql.NullFloat64 `json:"replaygain_track_peak"`
+	ReplaygainAlbumGainDb  sql.NullFloat64 `json:"replaygain_album_gain_db"`
+	ReplaygainAlbumPeak    sql.NullFloat64 `json:"replaygain_album_peak"`
+	EffectiveGainDb        sql.NullFloat64 `json:"effective_gain_db"`
+	EffectivePeak          sql.NullFloat64 `json:"effective_peak"`
+	EffectiveGainSource    string          `json:"effective_gain_source"`
+	EffectivePeakSource    string          `json:"effective_peak_source"`
+}
+
+func (q *Queries) UpsertTrackAudioFeatures(ctx context.Context, arg UpsertTrackAudioFeaturesParams) error {
+	_, err := q.db.ExecContext(ctx, upsertTrackAudioFeatures,
+		arg.TrackID,
+		arg.AnalyzedAt,
+		arg.FileDurationSeconds,
+		arg.MeasuredIntegratedLufs,
+		arg.MeasuredTruePeak,
+		arg.ReplaygainTrackGainDb,
+		arg.ReplaygainTrackPeak,
+		arg.ReplaygainAlbumGainDb,
+		arg.ReplaygainAlbumPeak,
+		arg.EffectiveGainDb,
+		arg.EffectivePeak,
+		arg.EffectiveGainSource,
+		arg.EffectivePeakSource,
 	)
 	return err
 }
