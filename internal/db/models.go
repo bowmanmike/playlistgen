@@ -58,6 +58,8 @@ type TrackAudioAnalysis struct {
 	Attempts      int64          `json:"attempts"`
 	LastAttemptAt sql.NullString `json:"last_attempt_at"`
 	CreatedAt     string         `json:"created_at"`
+	ClaimedAt     sql.NullString `json:"claimed_at"`
+	ClaimedBy     sql.NullString `json:"claimed_by"`
 }
 
 type TrackEmbeddingJob struct {
@@ -69,4 +71,6 @@ type TrackEmbeddingJob struct {
 	Attempts      int64          `json:"attempts"`
 	LastAttemptAt sql.NullString `json:"last_attempt_at"`
 	CreatedAt     string         `json:"created_at"`
+	ClaimedAt     sql.NullString `json:"claimed_at"`
+	ClaimedBy     sql.NullString `json:"claimed_by"`
 }

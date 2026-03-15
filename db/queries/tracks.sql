@@ -59,25 +59,116 @@ SELECT track_id, navidrome_id, last_synced_at FROM navidrome_track_sync_status;
 DELETE FROM tracks
 WHERE navidrome_id IN (sqlc.slice('nav_ids'));
 
--- name: InsertTrackAudioJob :exec
+-- name: EnsureTrackAudioJob :exec
 INSERT INTO track_audio_analysis (
   track_id,
   status,
   processed_at,
   error,
   attempts,
-  last_attempt_at
-) VALUES (?, ?, ?, ?, ?, ?);
+  last_attempt_at,
+  claimed_at,
+  claimed_by
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(track_id) WHERE status IN ('pending', 'processing') DO UPDATE SET
+  status = CASE
+    WHEN track_audio_analysis.status = 'processing' THEN 'processing'
+    ELSE 'pending'
+  END,
+  processed_at = CASE
+    WHEN track_audio_analysis.status = 'processing' THEN track_audio_analysis.processed_at
+    ELSE excluded.processed_at
+  END,
+  error = CASE
+    WHEN track_audio_analysis.status = 'processing' THEN track_audio_analysis.error
+    ELSE excluded.error
+  END,
+  attempts = CASE
+    WHEN track_audio_analysis.status = 'processing' THEN track_audio_analysis.attempts
+    ELSE excluded.attempts
+  END,
+  last_attempt_at = CASE
+    WHEN track_audio_analysis.status = 'processing' THEN track_audio_analysis.last_attempt_at
+    ELSE excluded.last_attempt_at
+  END,
+  claimed_at = CASE
+    WHEN track_audio_analysis.status = 'processing' THEN track_audio_analysis.claimed_at
+    ELSE excluded.claimed_at
+  END,
+  claimed_by = CASE
+    WHEN track_audio_analysis.status = 'processing' THEN track_audio_analysis.claimed_by
+    ELSE excluded.claimed_by
+  END;
 
--- name: InsertTrackEmbeddingJob :exec
+-- name: EnsureTrackEmbeddingJob :exec
 INSERT INTO track_embedding_jobs (
   track_id,
   status,
   processed_at,
   error,
   attempts,
-  last_attempt_at
-) VALUES (?, ?, ?, ?, ?, ?);
+  last_attempt_at,
+  claimed_at,
+  claimed_by
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(track_id) WHERE status IN ('pending', 'processing') DO UPDATE SET
+  status = CASE
+    WHEN track_embedding_jobs.status = 'processing' THEN 'processing'
+    ELSE 'pending'
+  END,
+  processed_at = CASE
+    WHEN track_embedding_jobs.status = 'processing' THEN track_embedding_jobs.processed_at
+    ELSE excluded.processed_at
+  END,
+  error = CASE
+    WHEN track_embedding_jobs.status = 'processing' THEN track_embedding_jobs.error
+    ELSE excluded.error
+  END,
+  attempts = CASE
+    WHEN track_embedding_jobs.status = 'processing' THEN track_embedding_jobs.attempts
+    ELSE excluded.attempts
+  END,
+  last_attempt_at = CASE
+    WHEN track_embedding_jobs.status = 'processing' THEN track_embedding_jobs.last_attempt_at
+    ELSE excluded.last_attempt_at
+  END,
+  claimed_at = CASE
+    WHEN track_embedding_jobs.status = 'processing' THEN track_embedding_jobs.claimed_at
+    ELSE excluded.claimed_at
+  END,
+  claimed_by = CASE
+    WHEN track_embedding_jobs.status = 'processing' THEN track_embedding_jobs.claimed_by
+    ELSE excluded.claimed_by
+  END;
+
+-- name: ClaimPendingAudioJobs :many
+UPDATE track_audio_analysis
+SET status = 'processing',
+    claimed_at = ?,
+    claimed_by = ?,
+    error = NULL
+WHERE id IN (
+  SELECT id
+  FROM track_audio_analysis
+  WHERE track_audio_analysis.status = 'pending'
+     OR (
+       track_audio_analysis.status = 'processing'
+       AND track_audio_analysis.claimed_at IS NOT NULL
+       AND track_audio_analysis.claimed_at <= ?
+     )
+  ORDER BY track_audio_analysis.created_at, track_audio_analysis.id
+  LIMIT ?
+)
+RETURNING id, track_id;
+
+-- name: ListAudioJobsByIDs :many
+SELECT
+  track_audio_analysis.id AS job_id,
+  sqlc.embed(tracks)
+FROM track_audio_analysis
+JOIN tracks ON tracks.id = track_audio_analysis.track_id
+WHERE track_audio_analysis.id IN (sqlc.slice('job_ids'))
+ORDER BY track_audio_analysis.id;
 
 -- name: ListPendingAudioJobs :many
 SELECT
@@ -91,5 +182,11 @@ LIMIT ?;
 
 -- name: UpdateAudioJobStatus :exec
 UPDATE track_audio_analysis
-SET status = ?, processed_at = ?, error = ?, attempts = attempts + 1, last_attempt_at = ?
+SET status = ?,
+    processed_at = ?,
+    error = ?,
+    attempts = attempts + 1,
+    last_attempt_at = ?,
+    claimed_at = ?,
+    claimed_by = ?
 WHERE id = ?;

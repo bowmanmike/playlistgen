@@ -41,6 +41,11 @@ func New(cfg Config) (*Store, error) {
 	db.SetMaxIdleConns(1)
 	db.SetConnMaxLifetime(time.Hour)
 
+	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("set busy timeout: %w", err)
+	}
+
 	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("enable foreign keys: %w", err)
@@ -58,6 +63,14 @@ func New(cfg Config) (*Store, error) {
 type AudioJob struct {
 	ID    int64
 	Track app.Track
+}
+
+// ClaimOptions controls how audio jobs are claimed for processing.
+type ClaimOptions struct {
+	Limit      int
+	ClaimedBy  string
+	StaleAfter time.Duration
+	Now        time.Time
 }
 
 // SaveTracks inserts or replaces provided tracks and records sync metadata.
@@ -351,28 +364,87 @@ func int64PtrFromSQL(ni sql.NullInt64) *int64 {
 func enqueueProcessingJobs(ctx context.Context, queries *db.Queries, trackID int64) error {
 	status := "pending"
 	resetValue := sql.NullString{}
-	if err := queries.InsertTrackAudioJob(ctx, db.InsertTrackAudioJobParams{
+	if err := queries.EnsureTrackAudioJob(ctx, db.EnsureTrackAudioJobParams{
 		TrackID:       trackID,
 		Status:        status,
 		ProcessedAt:   resetValue,
 		Error:         resetValue,
 		Attempts:      0,
 		LastAttemptAt: resetValue,
+		ClaimedAt:     resetValue,
+		ClaimedBy:     resetValue,
 	}); err != nil {
 		return fmt.Errorf("enqueue audio job: %w", err)
 	}
 
-	if err := queries.InsertTrackEmbeddingJob(ctx, db.InsertTrackEmbeddingJobParams{
+	if err := queries.EnsureTrackEmbeddingJob(ctx, db.EnsureTrackEmbeddingJobParams{
 		TrackID:       trackID,
 		Status:        status,
 		ProcessedAt:   resetValue,
 		Error:         resetValue,
 		Attempts:      0,
 		LastAttemptAt: resetValue,
+		ClaimedAt:     resetValue,
+		ClaimedBy:     resetValue,
 	}); err != nil {
 		return fmt.Errorf("enqueue embedding job: %w", err)
 	}
 	return nil
+}
+
+// ClaimPendingAudioJobs atomically claims pending or stale audio jobs.
+func (s *Store) ClaimPendingAudioJobs(ctx context.Context, opts ClaimOptions) ([]AudioJob, error) {
+	if opts.Limit <= 0 {
+		opts.Limit = 50
+	}
+	if strings.TrimSpace(opts.ClaimedBy) == "" {
+		opts.ClaimedBy = "audio-process"
+	}
+	if opts.Now.IsZero() {
+		opts.Now = time.Now().UTC()
+	}
+
+	claimedAt := sql.NullString{String: formatTimestamp(opts.Now.UTC()), Valid: true}
+	staleBefore := sql.NullString{}
+	if opts.StaleAfter > 0 {
+		staleBefore = sql.NullString{
+			String: formatTimestamp(opts.Now.UTC().Add(-opts.StaleAfter)),
+			Valid:  true,
+		}
+	}
+
+	queries := db.New(s.db)
+	claimedRows, err := queries.ClaimPendingAudioJobs(ctx, db.ClaimPendingAudioJobsParams{
+		ClaimedAt:   claimedAt,
+		ClaimedBy:   sql.NullString{String: opts.ClaimedBy, Valid: true},
+		ClaimedAt_2: staleBefore,
+		Limit:       int64(opts.Limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("claim audio jobs: %w", err)
+	}
+	if len(claimedRows) == 0 {
+		return nil, nil
+	}
+
+	jobIDs := make([]int64, 0, len(claimedRows))
+	for _, row := range claimedRows {
+		jobIDs = append(jobIDs, row.ID)
+	}
+
+	rows, err := queries.ListAudioJobsByIDs(ctx, jobIDs)
+	if err != nil {
+		return nil, fmt.Errorf("load claimed audio jobs: %w", err)
+	}
+
+	jobs := make([]AudioJob, 0, len(rows))
+	for _, row := range rows {
+		jobs = append(jobs, AudioJob{
+			ID:    row.JobID,
+			Track: convertDBTrack(row.Track),
+		})
+	}
+	return jobs, nil
 }
 
 // ListPendingAudioJobs returns pending audio jobs up to the provided limit.
@@ -423,6 +495,8 @@ func (s *Store) setAudioJobStatus(ctx context.Context, jobID int64, status strin
 		ProcessedAt:   processed,
 		Error:         errField,
 		LastAttemptAt: sql.NullString{String: nowUTC(), Valid: true},
+		ClaimedAt:     sql.NullString{},
+		ClaimedBy:     sql.NullString{},
 		ID:            jobID,
 	}
 	if err := db.New(s.db).UpdateAudioJobStatus(ctx, params); err != nil {

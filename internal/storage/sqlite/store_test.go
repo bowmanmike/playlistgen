@@ -339,3 +339,358 @@ func TestAudioJobLifecycle(t *testing.T) {
 		t.Fatalf("expected job failed, got %s", status)
 	}
 }
+
+func TestSaveTracksDoesNotCreateDuplicatePendingJobs(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "dedupe.db")
+	store, err := New(Config{Path: dbPath})
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	track := app.Track{
+		ID:        "dupetrack",
+		Title:     "Dupe Track",
+		Artist:    "Artist",
+		Album:     "Album",
+		CreatedAt: time.Unix(3000, 0),
+		UpdatedAt: time.Unix(3500, 0),
+		Duration:  100 * time.Second,
+		Path:      "/music/dupe.flac",
+		Suffix:    "flac",
+	}
+	if _, err := store.SaveTracks(context.Background(), []app.Track{track}); err != nil {
+		t.Fatalf("save tracks first: %v", err)
+	}
+
+	track.UpdatedAt = track.UpdatedAt.Add(time.Hour)
+	if _, err := store.SaveTracks(context.Background(), []app.Track{track}); err != nil {
+		t.Fatalf("save tracks second: %v", err)
+	}
+
+	raw, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	defer raw.Close()
+
+	var activeAudio int
+	if err := raw.QueryRow(`
+		SELECT COUNT(*)
+		FROM track_audio_analysis
+		WHERE track_id = (SELECT id FROM tracks WHERE navidrome_id = ?)
+		  AND status IN ('pending', 'processing')
+	`, track.ID).Scan(&activeAudio); err != nil {
+		t.Fatalf("count active audio jobs: %v", err)
+	}
+	if activeAudio != 1 {
+		t.Fatalf("expected 1 active audio job, got %d", activeAudio)
+	}
+
+	var activeEmbedding int
+	if err := raw.QueryRow(`
+		SELECT COUNT(*)
+		FROM track_embedding_jobs
+		WHERE track_id = (SELECT id FROM tracks WHERE navidrome_id = ?)
+		  AND status IN ('pending', 'processing')
+	`, track.ID).Scan(&activeEmbedding); err != nil {
+		t.Fatalf("count active embedding jobs: %v", err)
+	}
+	if activeEmbedding != 1 {
+		t.Fatalf("expected 1 active embedding job, got %d", activeEmbedding)
+	}
+}
+
+func TestClaimPendingAudioJobsReclaimsStaleProcessingJobs(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "stale-claim.db")
+	store, err := New(Config{Path: dbPath})
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	track := app.Track{
+		ID:        "stale-claim-track",
+		Title:     "Stale Claim Track",
+		Artist:    "Artist",
+		Album:     "Album",
+		CreatedAt: time.Unix(4000, 0),
+		UpdatedAt: time.Unix(4500, 0),
+		Duration:  90 * time.Second,
+		Path:      "/music/stale.flac",
+		Suffix:    "flac",
+	}
+	if _, err := store.SaveTracks(context.Background(), []app.Track{track}); err != nil {
+		t.Fatalf("save tracks: %v", err)
+	}
+
+	raw, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	defer raw.Close()
+
+	staleClaimedAt := time.Now().Add(-2 * time.Hour).Format(time.RFC3339Nano)
+	if _, err := raw.Exec(`
+		UPDATE track_audio_analysis
+		SET status = 'processing', claimed_at = ?, claimed_by = ?
+		WHERE track_id = (SELECT id FROM tracks WHERE navidrome_id = ?)
+	`, staleClaimedAt, "runner-old", track.ID); err != nil {
+		t.Fatalf("seed stale claim: %v", err)
+	}
+
+	jobs, err := store.ClaimPendingAudioJobs(context.Background(), ClaimOptions{
+		Limit:      1,
+		ClaimedBy:  "runner-new",
+		StaleAfter: time.Minute,
+		Now:        time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("claim pending jobs: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("expected 1 claimed job, got %d", len(jobs))
+	}
+	if jobs[0].Track.ID != track.ID {
+		t.Fatalf("expected claimed track %s, got %s", track.ID, jobs[0].Track.ID)
+	}
+}
+
+func TestStoreClaimPendingAudioJobsSetsClaimFields(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "claim-fields.db")
+	store, err := New(Config{Path: dbPath})
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	track := app.Track{
+		ID:        "claim-track",
+		Title:     "Claim Track",
+		Artist:    "Artist",
+		Album:     "Album",
+		CreatedAt: time.Unix(5000, 0),
+		Duration:  70 * time.Second,
+		Path:      "/music/claim.flac",
+		Suffix:    "flac",
+	}
+	if _, err := store.SaveTracks(context.Background(), []app.Track{track}); err != nil {
+		t.Fatalf("save tracks: %v", err)
+	}
+
+	now := time.Now().UTC()
+	jobs, err := store.ClaimPendingAudioJobs(context.Background(), ClaimOptions{
+		Limit:      1,
+		ClaimedBy:  "runner-a",
+		StaleAfter: time.Minute,
+		Now:        now,
+	})
+	if err != nil {
+		t.Fatalf("claim pending jobs: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("expected 1 claimed job, got %d", len(jobs))
+	}
+
+	raw, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	defer raw.Close()
+
+	var status string
+	var claimedAt sql.NullString
+	var claimedBy sql.NullString
+	if err := raw.QueryRow("SELECT status, claimed_at, claimed_by FROM track_audio_analysis WHERE id=?", jobs[0].ID).Scan(&status, &claimedAt, &claimedBy); err != nil {
+		t.Fatalf("query claimed job: %v", err)
+	}
+	if status != "processing" {
+		t.Fatalf("expected processing status, got %s", status)
+	}
+	if !claimedAt.Valid || claimedAt.String != now.Format(time.RFC3339Nano) {
+		t.Fatalf("unexpected claimed_at %v", claimedAt)
+	}
+	if !claimedBy.Valid || claimedBy.String != "runner-a" {
+		t.Fatalf("unexpected claimed_by %v", claimedBy)
+	}
+}
+
+func TestCompleteAudioJobClearsClaimFields(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "complete-clears-claim.db")
+	store, err := New(Config{Path: dbPath})
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	jobID := seedClaimedAudioJob(t, store, dbPath, "complete-claim")
+	if err := store.CompleteAudioJob(context.Background(), jobID); err != nil {
+		t.Fatalf("complete job: %v", err)
+	}
+
+	raw, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	defer raw.Close()
+
+	var status string
+	var processedAt sql.NullString
+	var claimedAt sql.NullString
+	var claimedBy sql.NullString
+	if err := raw.QueryRow("SELECT status, processed_at, claimed_at, claimed_by FROM track_audio_analysis WHERE id=?", jobID).Scan(&status, &processedAt, &claimedAt, &claimedBy); err != nil {
+		t.Fatalf("query completed job: %v", err)
+	}
+	if status != "completed" {
+		t.Fatalf("expected completed status, got %s", status)
+	}
+	if !processedAt.Valid {
+		t.Fatalf("expected processed timestamp")
+	}
+	if claimedAt.Valid || claimedBy.Valid {
+		t.Fatalf("expected claim fields cleared, got claimed_at=%v claimed_by=%v", claimedAt, claimedBy)
+	}
+}
+
+func TestFailAudioJobRetainsAttemptsAndClearsOwnership(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "fail-clears-claim.db")
+	store, err := New(Config{Path: dbPath})
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	jobID := seedClaimedAudioJob(t, store, dbPath, "fail-claim")
+	if err := store.FailAudioJob(context.Background(), jobID, errors.New("boom")); err != nil {
+		t.Fatalf("fail job: %v", err)
+	}
+
+	raw, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	defer raw.Close()
+
+	var status string
+	var attempts int
+	var jobErr sql.NullString
+	var claimedAt sql.NullString
+	var claimedBy sql.NullString
+	if err := raw.QueryRow("SELECT status, attempts, error, claimed_at, claimed_by FROM track_audio_analysis WHERE id=?", jobID).Scan(&status, &attempts, &jobErr, &claimedAt, &claimedBy); err != nil {
+		t.Fatalf("query failed job: %v", err)
+	}
+	if status != "failed" {
+		t.Fatalf("expected failed status, got %s", status)
+	}
+	if attempts != 1 {
+		t.Fatalf("expected attempts=1, got %d", attempts)
+	}
+	if !jobErr.Valid || jobErr.String != "boom" {
+		t.Fatalf("unexpected error field %v", jobErr)
+	}
+	if claimedAt.Valid || claimedBy.Valid {
+		t.Fatalf("expected claim fields cleared, got claimed_at=%v claimed_by=%v", claimedAt, claimedBy)
+	}
+}
+
+func TestClaimPendingAudioJobsDoesNotReturnSameJobTwice(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "concurrent-claims.db")
+	storeA, err := New(Config{Path: dbPath})
+	if err != nil {
+		t.Fatalf("new store A: %v", err)
+	}
+	t.Cleanup(func() { storeA.Close() })
+
+	storeB, err := New(Config{Path: dbPath})
+	if err != nil {
+		t.Fatalf("new store B: %v", err)
+	}
+	t.Cleanup(func() { storeB.Close() })
+
+	tracks := make([]app.Track, 0, 4)
+	for i := 0; i < 4; i++ {
+		tracks = append(tracks, app.Track{
+			ID:        "concurrent-track-" + string(rune('a'+i)),
+			Title:     "Concurrent Track",
+			Artist:    "Artist",
+			Album:     "Album",
+			CreatedAt: time.Unix(int64(6000+i), 0),
+			Duration:  80 * time.Second,
+			Path:      "/music/concurrent.flac",
+			Suffix:    "flac",
+		})
+	}
+	if _, err := storeA.SaveTracks(context.Background(), tracks); err != nil {
+		t.Fatalf("save tracks: %v", err)
+	}
+
+	type claimResult struct {
+		jobs []AudioJob
+		err  error
+	}
+
+	now := time.Now().UTC()
+	resultCh := make(chan claimResult, 2)
+	go func() {
+		jobs, err := storeA.ClaimPendingAudioJobs(context.Background(), ClaimOptions{Limit: 2, ClaimedBy: "runner-a", StaleAfter: time.Minute, Now: now})
+		resultCh <- claimResult{jobs: jobs, err: err}
+	}()
+	go func() {
+		jobs, err := storeB.ClaimPendingAudioJobs(context.Background(), ClaimOptions{Limit: 2, ClaimedBy: "runner-b", StaleAfter: time.Minute, Now: now})
+		resultCh <- claimResult{jobs: jobs, err: err}
+	}()
+
+	first := <-resultCh
+	second := <-resultCh
+	if first.err != nil {
+		t.Fatalf("first claim: %v", first.err)
+	}
+	if second.err != nil {
+		t.Fatalf("second claim: %v", second.err)
+	}
+
+	seen := make(map[int64]string)
+	for _, batch := range []claimResult{first, second} {
+		for _, job := range batch.jobs {
+			if owner, ok := seen[job.ID]; ok {
+				t.Fatalf("job %d claimed twice by %s and another runner", job.ID, owner)
+			}
+			seen[job.ID] = job.Track.ID
+		}
+	}
+	if len(seen) != 4 {
+		t.Fatalf("expected 4 unique claimed jobs, got %d", len(seen))
+	}
+}
+
+func seedClaimedAudioJob(t *testing.T, store *Store, dbPath, navidromeID string) int64 {
+	t.Helper()
+
+	track := app.Track{
+		ID:        navidromeID,
+		Title:     "Seed Claimed Track",
+		Artist:    "Artist",
+		Album:     "Album",
+		CreatedAt: time.Unix(7000, 0),
+		Duration:  75 * time.Second,
+		Path:      "/music/seed.flac",
+		Suffix:    "flac",
+	}
+	if _, err := store.SaveTracks(context.Background(), []app.Track{track}); err != nil {
+		t.Fatalf("save seed track: %v", err)
+	}
+
+	jobs, err := store.ClaimPendingAudioJobs(context.Background(), ClaimOptions{
+		Limit:      1,
+		ClaimedBy:  "seed-runner",
+		StaleAfter: time.Minute,
+		Now:        time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("claim seed job: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("expected 1 seed job, got %d", len(jobs))
+	}
+	return jobs[0].ID
+}
