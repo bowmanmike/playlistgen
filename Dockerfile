@@ -12,7 +12,7 @@ COPY . .
 RUN go build -o /out/playlistgen ./cmd/playlistgen
 
 FROM alpine:3.19
-RUN adduser -D playlistgen
+RUN apk add --no-cache ffmpeg && adduser -D playlistgen
 USER playlistgen
 WORKDIR /home/playlistgen
 COPY --from=build /out/playlistgen /usr/local/bin/playlistgen
